@@ -10,6 +10,19 @@ The user will specify the target repository or repositories. Do not modify this 
 
 Before working in a target repository, read its `AGENTS.md` and any related instructions. Do this separately for each repository.
 
+## Surgical Changes
+
+When modifying a target repository:
+
+- Touch only what the requested outcome requires.
+- Preserve unrelated code, documentation, comments, formatting, and names.
+- Refactor existing code only when the user requests it or the requested change requires it.
+- Match the target repository's established style and conventions.
+- Remove only artifacts that the current change made unused.
+- Report unrelated problems instead of fixing them.
+
+Automatically loaded skills guide in-scope work. They do not expand the task or authorize adjacent changes.
+
 ## Read-only Work
 
 For investigation, analysis, explanation, and other read-only tasks, use the existing checkout directly. A worktree is not required.
