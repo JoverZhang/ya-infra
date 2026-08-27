@@ -1,0 +1,6 @@
+interface:
+  display_name: "How to Write Scripts"
+  short_description: "Standards for clear, focused workflow automation scripts"
+  default_prompt: "Use $how-to-write-scripts to write a focused workflow automation script."
+policy:
+  allow_implicit_invocation: true
