@@ -1,15 +1,14 @@
 ---
 doc_id: architecture.<subject>
 title: "<Reader-oriented title>"
-language: <zh-CN|en>
-source_language: <zh-CN|en>
-counterpart: ./<counterpart-filename>.md
-implementation_status: <current|planned|exploratory|deprecated|historical>
-document_status: <draft|stable|deprecated|historical>
-translation_status: <synced|needs-update|source-only>
-last_verified: YYYY-MM-DD
+document_type: "<system-overview|component|mechanism|data-flow|deployment|decision>"
+implementation_status: "<current|planned|exploratory|deprecated|historical>"
+document_status: "<draft|stable|deprecated|historical>"
+last_verified: "YYYY-MM-DD"
 owners:
-  - maka-backend
+  - "<team-or-role>"
+# For maintained translations, add language, source_language, counterpart,
+# and translation_status fields when the repository has no equivalent convention.
 ---
 <!--
   Licensed to the Apache Software Foundation (ASF) under one
@@ -32,11 +31,11 @@ owners:
 
 # <Reader-oriented title>
 
-> In one paragraph: what question this article answers, the conclusion, and why it matters.
+> In one paragraph: what question or decision this document addresses, the conclusion, and why it matters.
 
 ## Why this matters
 
-Describe the engineering or reader problem. Define the scope and relevant exclusions.
+Describe the engineering or reader problem. Define the scope, system context, and relevant exclusions.
 
 ## Mental model
 
@@ -44,11 +43,11 @@ Give the simplest correct intuition. Define central terms before relying on them
 
 ## A concrete scenario
 
-Introduce one representative example that can continue through the article.
+Introduce one representative example that can continue through the document.
 
 ## How it works
 
-Explain the mechanism, sequence, data, and component responsibilities. Add only diagrams that answer a specific question.
+Explain the mechanism, sequence, data, and component responsibilities. Add only diagrams that answer a specific question. Adapt this section to the chosen artifact type.
 
 ## State and invariants
 
@@ -56,7 +55,7 @@ Describe lifecycle, durable and ephemeral state, valid transitions, ownership, o
 
 ## Boundaries
 
-State what this mechanism owns, what it delegates, and what it explicitly does not guarantee.
+State what this design owns, what it delegates, and what it explicitly does not guarantee. Include trust boundaries and architecture-significant quality constraints when relevant.
 
 ## Failure and recovery
 
@@ -78,4 +77,4 @@ Keep Current, Planned, and Exploratory claims visibly separate.
 
 Link related architecture documents, ADRs, API specifications, and code-owned references.
 
-<!-- Remove any section that does not help answer this article's core question. -->
+<!-- Follow repository conventions and remove any section that does not help answer the document's core question. -->
