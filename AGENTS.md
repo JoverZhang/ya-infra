@@ -32,7 +32,7 @@ Before making changes, prepare the environment and isolated resources according 
 
 Unless the user explicitly asks to keep changes local, push the task branch and use `gh` to create or update a Draft PR.
 
-Mark the PR as Ready only after all checks pass and $code-review issues have been resolved.
+Mark the PR as Ready only after all checks pass and `$code-review` issues have been resolved.
 
 ## Worktree Cleanup
 
