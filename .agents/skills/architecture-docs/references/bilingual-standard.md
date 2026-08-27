@@ -17,19 +17,19 @@
   under the License.
 -->
 
-# Architecture Documentation Translation Standard
+# Bilingual Documentation Standard
 
-## Publishing model
+## Default publishing model
 
-When a project maintains the same document in multiple languages, prefer separate, complete counterparts. Use the repository's matching-path, filename, or stable `doc_id` convention. Reuse diagrams, code snippets, schemas, and other language-neutral assets.
+Maintain separate, complete Chinese and English documents. Give counterparts matching relative paths, filenames, or a shared stable `doc_id`. Reuse diagrams, code snippets, schemas, and other language-neutral assets.
 
-Use a side-by-side or interleaved format only when that format serves the requested reading or review workflow.
+Avoid paragraph-by-paragraph interleaving unless the user explicitly needs a side-by-side artifact. Interleaving makes both versions harder to read and maintain.
 
 ## Source and counterpart
 
-Choose one source language for each editing cycle and establish which version is authoritative. When technical verification is in scope, verify the source before creating the counterpart. Otherwise preserve its degree of certainty and flag contradictions or suspected errors instead of silently repairing them. The counterpart is an adaptation for readers in the target language, not a sentence-by-sentence transliteration.
+Choose one source language for each editing cycle. Draft and technically verify that version first, then create the counterpart. The counterpart is an adaptation for readers in the target language, not a literal transliteration.
 
-Every language counterpart must preserve:
+Both versions must preserve:
 
 - the core question and scope;
 - technical claims and their lifecycle status;
@@ -39,27 +39,27 @@ Every language counterpart must preserve:
 - decision rationale and trade-offs;
 - warnings, limitations, and failure behavior.
 
-Natural differences in sentence structure, section phrasing, and explanatory context are allowed. Do not add a technical claim to only one counterpart without intentionally updating or marking the others.
+Natural differences in sentence structure, section phrasing, and explanatory context are allowed. Do not add a technical claim to only one language version without intentionally updating or marking the other.
 
 ## Terminology
 
-For recurring project concepts, follow an existing glossary or maintain a small task-local term map with the fields that apply:
+Maintain a project glossary with at least:
 
 | Field | Meaning |
 |---|---|
-| Source term | Preferred term in the source language |
-| Target term | Preferred term in the target language |
+| Chinese term | Preferred Chinese name |
+| English term | Canonical English name |
 | Code identifier | Type, field, API, or package spelling when relevant |
 | Definition | Language-neutral concept boundary |
 | Avoid | Ambiguous or deprecated synonyms |
 
-Preserve code identifiers exactly. On first use, introduce the source or canonical term when it helps recognition; afterward, use the natural preferred term consistently.
+Preserve code identifiers exactly. On first use, introduce the counterpart when it helps recognition, for example `运行（Run）`; afterward, use the natural preferred term consistently.
 
 Do not translate product names, protocol names, type names, or identifiers merely to make the prose look fully localized.
 
 ## Semantic parity checks
 
-Compare counterparts by meaning rather than sentence count:
+Compare the two versions by meaning rather than sentence count:
 
 1. Do titles and summaries promise the same answer?
 2. Do scope and exclusions match?
@@ -67,38 +67,39 @@ Compare counterparts by meaning rather than sentence count:
 4. Are MUST, SHOULD, MAY, guarantees, and possibilities equally strong?
 5. Do quantities, timeouts, limits, state names, and ordering rules match?
 6. Are failure and recovery behaviors equally complete?
-7. Do diagrams use terms recognized by every counterpart?
+7. Do diagrams use terms recognized by both versions?
 8. Do links resolve to the appropriate language or shared source?
 
 Translation must not silently turn “may” into “will,” “planned” into “supported,” or “usually” into “always.”
 
 ## Suggested metadata
 
-Use repository conventions first. When no convention exists and maintained counterparts need explicit linkage, recommend metadata such as:
+Use repository conventions first. When no convention exists, recommend metadata such as:
 
 ```yaml
 doc_id: architecture.example
 title: "Reader-oriented title"
-language: "<BCP-47-language-tag>"
-source_language: "<BCP-47-language-tag>"
-counterpart: "./<counterpart-filename>.md"
+language: zh-CN
+source_language: zh-CN
+counterpart: ./example.md
 implementation_status: current
 document_status: draft
 translation_status: synced
 last_verified: YYYY-MM-DD
 owners:
-  - "<team-or-role>"
+  - <team-or-role>
 ```
 
 Useful translation states are `synced`, `needs-update`, and `source-only`. Metadata is optional unless the project adopts it; semantic clarity is mandatory.
 
 ## Writing voice
 
-In every language version:
+In both languages:
 
 - prefer direct, concrete sentences;
 - explain necessary jargon at first use;
 - write headings as reader-oriented signposts;
 - avoid promotional claims and vague adjectives;
-- retain the same technical altitude, even when one language needs extra connective explanation;
-- use idiomatic target-language syntax and discourse rather than exposing the source language's sentence structure.
+- retain the same technical altitude, even when one language needs extra connective explanation.
+
+Chinese prose should read as native technical Chinese rather than English syntax with Chinese words. English prose should read as an original technical article rather than expose Chinese word order or omitted subjects.

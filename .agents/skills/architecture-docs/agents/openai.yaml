@@ -17,5 +17,5 @@
 
 interface:
   display_name: "Architecture Docs"
-  short_description: "Create evidence-backed architecture documentation"
-  default_prompt: "Use $architecture-docs to draft or review an evidence-backed architecture document."
+  short_description: "Write clear, rigorous bilingual architecture documents"
+  default_prompt: "Use $architecture-docs to draft or review a bilingual architecture document."

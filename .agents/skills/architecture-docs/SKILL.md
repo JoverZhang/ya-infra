@@ -1,6 +1,6 @@
 ---
 name: architecture-docs
-description: Draft, restructure, translate, or review evidence-backed architecture documentation. Use for system, component, mechanism, data-flow, deployment, or architecture-decision narratives that must explain boundaries, lifecycle status, failure behavior, and trade-offs. Do not use for API references, operational runbooks, or generic prose editing unless architectural reasoning is central.
+description: Draft, restructure, translate, or review bilingual Chinese-English architecture documentation. Use when Codex works on technical narratives, component or mechanism explanations, architecture decisions, system flows, engineering guides, or documentation quality checks and needs blog-like clarity without losing architectural precision. Do not use it to impose a fixed topic list or information architecture unless the user asks for one.
 ---
 <!--
   Licensed to the Apache Software Foundation (ASF) under one
@@ -23,42 +23,41 @@ description: Draft, restructure, translate, or review evidence-backed architectu
 
 # Architecture Docs
 
-Create architecture documentation that is easy to enter, technically rigorous, and maintainable. Treat the user's subject, audience, scope, language, and chosen organization as constraints. This skill governs evidence, narrative quality, technical precision, translation parity when needed, and review.
+Create architecture documentation that is easy to enter, technically rigorous, and maintainable in both Chinese and English. Treat the user's chosen subject and document organization as constraints; this skill governs writing quality, evidence, bilingual consistency, and review.
 
 ## Select the task mode
 
 - **Draft**: create a new document from code, design notes, interviews, or a user brief.
 - **Rewrite**: improve an existing document while preserving its technical meaning.
-- **Translate**: produce a natural counterpart in the target language while preserving technical meaning.
-- **Review**: identify concrete gaps in clarity, evidence, correctness, or counterpart consistency when translations exist.
+- **Translate**: produce a natural counterpart in the other language, not a sentence-by-sentence transliteration.
+- **Review**: identify concrete gaps in clarity, evidence, correctness, or bilingual consistency.
 - **Standardize**: align multiple documents on terminology, metadata, status labels, and structure without forcing them into identical narratives.
 
 Confirm the intended mode from the request. Infer it when safe; ask only when different interpretations would materially change the output.
 
 ## Follow the workflow
 
-1. **Establish the document contract.** State the primary reader question or decision, intended reader, expected reading depth, scope, evidence basis, and claimed implementation status. Infer these when the request and repository make them clear. Preserve the user's outline unless changing it is part of the request.
-2. **Choose the artifact shape.** Follow repository conventions for an overview, component guide, mechanism explanation, data or deployment view, ADR, or another established form. Let the question determine the structure.
-3. **Collect evidence.** For current-state claims, inspect relevant code paths, tests, schemas, configuration, ADRs, runtime signals, and existing documents before presenting implementation details as facts. Match the evidence to the claim, and separate verified behavior, accepted decisions, plans, and interpretation.
-4. **Build the narrative.** Move from problem and intuition to a representative scenario, mechanism, boundaries, failures, and trade-offs when those elements help answer the core question.
-5. **Add technical anchors.** Connect claims to components, state transitions, invariants, interfaces, trust boundaries, operational signals, or stable code locations at the promised reading depth.
-6. **Handle language counterparts when requested.** Preserve scope, status, certainty, examples, diagrams, and decision rationale while writing naturally for the target audience.
-7. **Run the quality gate.** Review the artifact against `references/quality-gate.md`. For Draft, Rewrite, Translate, and Standardize work, fix failed required checks that apply or report them as unresolved when evidence is unavailable. For Review work, report the failures without changing files unless the user also asked for fixes.
+1. **Establish the article contract.** State the one core question, intended reader, expected reading depth, source language, and claimed implementation status. Do not invent a topic or replace the user's outline.
+2. **Collect evidence.** Inspect the relevant code paths, tests, schemas, configuration, ADRs, and existing documents before presenting implementation details as facts. Separate verified behavior from plans and interpretation.
+3. **Build the narrative.** Move from problem and intuition to a concrete scenario, then mechanism, boundaries, failures, and trade-offs. Include only the sections that help answer the core question.
+4. **Add technical anchors.** Connect claims to real components, state transitions, invariants, interfaces, observability signals, or code locations as appropriate.
+5. **Create the bilingual counterpart.** Preserve concepts, status, examples, diagrams, and section identity while rewriting naturally for the target language.
+6. **Run the quality gate.** Review both language versions against `references/quality-gate.md`. Fix failed required checks before calling the document complete.
 
-Read `references/writing-standard.md` for Draft, Rewrite, Review, and Standardize work. Read `references/translation-standard.md` only when translating or comparing language counterparts. Use `assets/document-template.md` for a new narrative document only when the repository has no better scaffold and the template fits the subject; remove irrelevant sections rather than filling them mechanically.
+Read `references/writing-standard.md` whenever drafting, rewriting, or standardizing architecture content. Read `references/bilingual-standard.md` whenever creating or reviewing both languages. Use `assets/article-template.md` as a starting scaffold only when it fits the chosen subject; remove irrelevant sections rather than filling them mechanically.
 
 ## Apply non-negotiable rules
 
-- Start from a reader question, architecture decision, or engineering problem, not a component inventory.
-- Distinguish current, planned, exploratory, deprecated, and historical claims, using the repository's equivalent labels when they exist.
+- Start from a reader question or engineering problem, not a component inventory.
+- Distinguish **Current**, **Planned**, **Exploratory**, **Deprecated**, and **Historical** claims.
 - Never present an unverified design assumption as current implementation.
 - Explain important mechanisms through intuition, scenario, mechanism, and boundary.
 - Cover meaningful failure paths and trade-offs, not only the happy path.
 - Keep diagrams purposeful and language-neutral where practical; explain what each diagram includes and omits.
-- Use stable terms. Do not alternate among synonyms for variety when they represent the same architectural concept.
-- Cover material quality attributes and trust boundaries when they affect the design; omit boilerplate categories that do not.
-- Preserve uncertainty across rewrites and translations. Do not strengthen or weaken a claim.
-- Optimize for progressive depth: a reader should gain value from the opening summary without reading the entire document.
+- Use stable terms. Do not alternate among synonyms for variety when they represent the same project concept.
+- Prefer separate, complete Chinese and English documents with shared assets over interleaved paragraph-by-paragraph translation.
+- Preserve uncertainty. Translation must not strengthen or weaken a claim.
+- Optimize for progressive depth: a reader should gain value from the opening summary without reading the entire article.
 
 ## Handle reviews
 
@@ -67,7 +66,7 @@ Lead with actionable findings ordered by impact. Cite the exact section or line 
 1. factual correctness and status confusion;
 2. missing boundaries, invariants, or failure behavior;
 3. broken narrative or unexplained concepts;
-4. semantic drift and terminology inconsistency across language counterparts, when present;
+4. bilingual semantic drift and terminology inconsistency;
 5. maintainability issues such as duplicated diagrams or unstable code references;
 6. style polish.
 
@@ -75,4 +74,4 @@ If there are no material findings, say so and identify any verification limits.
 
 ## Deliver artifacts
 
-When creating files, follow the repository's existing documentation layout. If no convention exists, recommend rather than silently establish a repository-wide structure. For maintained translations, follow the project's counterpart naming or stable document-ID convention. Report which technical claims were verified, which evidence was used, and which claims remain planned, inferred, or uncertain.
+When creating files, follow the repository's existing documentation layout. If no convention exists, recommend rather than silently establish a new repository-wide structure. Keep language counterparts at matching relative paths or give them stable shared document IDs. Report which technical claims were verified and which remain planned or uncertain.
