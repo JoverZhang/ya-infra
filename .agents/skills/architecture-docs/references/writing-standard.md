@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Maka Architecture Writing Standard
+# Architecture Writing Standard
 
 ## Purpose
 

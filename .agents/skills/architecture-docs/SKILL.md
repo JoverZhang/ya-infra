@@ -1,6 +1,6 @@
 ---
-name: maka-architecture-docs
-description: Draft, restructure, translate, or review bilingual Chinese-English architecture documentation for the Maka Agent backend. Use when Codex works on Maka technical narratives, component or mechanism explanations, architecture decisions, system flows, engineering guides, or documentation quality checks and needs blog-like clarity without losing architectural precision. Do not use it to impose a fixed topic list or information architecture unless the user asks for one.
+name: architecture-docs
+description: Draft, restructure, translate, or review bilingual Chinese-English architecture documentation. Use when Codex works on technical narratives, component or mechanism explanations, architecture decisions, system flows, engineering guides, or documentation quality checks and needs blog-like clarity without losing architectural precision. Do not use it to impose a fixed topic list or information architecture unless the user asks for one.
 ---
 <!--
   Licensed to the Apache Software Foundation (ASF) under one
@@ -21,7 +21,7 @@ description: Draft, restructure, translate, or review bilingual Chinese-English 
   under the License.
 -->
 
-# Maka Architecture Docs
+# Architecture Docs
 
 Create architecture documentation that is easy to enter, technically rigorous, and maintainable in both Chinese and English. Treat the user's chosen subject and document organization as constraints; this skill governs writing quality, evidence, bilingual consistency, and review.
 
@@ -54,7 +54,7 @@ Read `references/writing-standard.md` whenever drafting, rewriting, or standardi
 - Explain important mechanisms through intuition, scenario, mechanism, and boundary.
 - Cover meaningful failure paths and trade-offs, not only the happy path.
 - Keep diagrams purposeful and language-neutral where practical; explain what each diagram includes and omits.
-- Use stable terms. Do not alternate among synonyms for variety when they represent the same Maka concept.
+- Use stable terms. Do not alternate among synonyms for variety when they represent the same project concept.
 - Prefer separate, complete Chinese and English documents with shared assets over interleaved paragraph-by-paragraph translation.
 - Preserve uncertainty. Translation must not strengthen or weaken a claim.
 - Optimize for progressive depth: a reader should gain value from the opening summary without reading the entire article.

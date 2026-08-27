@@ -9,7 +9,7 @@ document_status: <draft|stable|deprecated|historical>
 translation_status: <synced|needs-update|source-only>
 last_verified: YYYY-MM-DD
 owners:
-  - maka-backend
+  - agent
 ---
 <!--
   Licensed to the Apache Software Foundation (ASF) under one
