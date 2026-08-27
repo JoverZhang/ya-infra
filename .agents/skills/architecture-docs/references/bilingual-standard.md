@@ -87,7 +87,7 @@ document_status: draft
 translation_status: synced
 last_verified: YYYY-MM-DD
 owners:
-  - <team-or-role>
+  - agent
 ```
 
 Useful translation states are `synced`, `needs-update`, and `source-only`. Metadata is optional unless the project adopts it; semantic clarity is mandatory.
