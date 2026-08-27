@@ -1,46 +1,24 @@
 ---
 name: how-to-write-scripts
-description: Standards for Bash, Python, and PowerShell workflow scripts that orchestrate ordered external effects. Use when creating, changing, or reviewing automation scripts such as setup, build, release, migration, and repository tooling. Do not use for business or data computation, one-off command snippets, task-runner or CI configuration, or interactive wizards.
+description: Standards for writing, changing, or reviewing automation scripts that coordinate external effects.
 ---
 
 # How to Write Scripts
 
-A script owns one workflow. Keep a single-phase workflow inline. When a script has multiple external-effect phases, give it one workflow entry point that calls named actions in execution order.
+A script should read like the outline of one workflow.
 
-The workflow entry point expresses sequence. Commands, I/O, output parsing, default selection, rollback mechanics, and other implementation details belong in actions.
-
-An `action` names a stable workflow step and hides its concrete mechanics, such as `git`, `gh`, task-runner, filesystem, or process calls. It also owns the relevant error or cleanup responsibility.
-
-Extract an action when at least one condition holds:
-
-- Real callers reuse it.
-- It hides enough mechanics to make the call site materially simpler.
-- It provides a clear state, error, or cleanup seam.
-- It represents a stable workflow step whose name carries more intent than its implementation.
-
-Keep a single command inline instead of adding a synonymous wrapper. Name actions after intent; names such as `step_1`, `run_command`, and `do_work` only restate mechanics.
-
-Expected shape:
+- Keep a simple workflow inline.
+- For a multi-step workflow, let the entry point call named actions in order.
+- In a multi-step workflow, put commands, I/O, parsing, and error or cleanup mechanics inside actions.
+- Name actions by intent, such as `prepare_release`, rather than mechanics such as `run_command`.
+- A stable workflow step justifies a top-level action. Extract lower-level helpers only for meaningful complexity, an error or cleanup boundary, or real reuse.
 
 ```bash
 main() {
-  parse_task_request "$@"
-  resolve_task_worktree
-  reserve_base_port
-  create_task_worktree
-  initialize_task_worktree
+  parse_request "$@"
+  resolve_target
+  build_target
+  publish_target
 }
-
 main "$@"
-```
-
-The same shape applies across languages: the workflow shows the ordered story, while actions contain the mechanics.
-
-Mechanics exposed at the workflow level obscure that story:
-
-```bash
-task_slug="$1"
-git worktree add "../project-$task_slug" -b "agent/$task_slug"
-cd "../project-$task_slug"
-scripts/setup_config.sh 21000
 ```
