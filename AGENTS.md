@@ -31,9 +31,11 @@ For investigation, analysis, explanation, and other read-only tasks, use the exi
 
 Use a dedicated Git worktree when modifying code, tests, documentation, or configuration.
 
-- Create one task worktree per repository at the workspace root.
+- Keep each repository's primary checkout at the workspace root.
+- Create one task worktree per repository at `.worktrees/<repository>/<task-slug>`, where
+  `<repository>` is the primary checkout's directory name.
+- Create task worktrees for this workspace repository at `.worktrees/_workspace/<task-slug>`.
 - Branch name: `agent/<task-slug>`.
-- Worktree name: `<repository>-<task-slug>`.
 - Start from the remote default branch by default.
 - Do not modify the original checkout or its current branch.
 - Reuse an existing worktree for the same task when available.
