@@ -45,6 +45,9 @@ Before making changes, prepare the environment and isolated resources according 
 
 ## Validation and Delivery
 
+Write PR titles and descriptions in Simplified Chinese. Keep code identifiers, file paths,
+commands, and precise technical terms in English.
+
 Unless the user explicitly asks to keep changes local, push the task branch and use `gh` to create or update a Draft PR.
 
 Mark the PR as Ready only after all checks pass and `$code-review` issues have been resolved.
