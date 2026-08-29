@@ -10,6 +10,8 @@ The user will specify the target repository or repositories. Do not modify this 
 
 Before working in a target repository, read its `AGENTS.md` and any related instructions. Do this separately for each repository.
 
+On first access to a Git repository during a session, run `git fetch origin` and fast-forward its local default branch to `origin/<default-branch>`.
+
 ## Surgical Changes
 
 When modifying a target repository:
@@ -52,4 +54,3 @@ Mark the PR as Ready only after all checks pass and `$code-review` issues have b
 ## Worktree Cleanup
 
 Remove a worktree only when required by the task or explicitly requested by the user.
-
