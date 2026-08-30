@@ -57,3 +57,16 @@ Keep the PR in Draft and run `$code-review` exactly twice, using the PR's base b
 ## Worktree Cleanup
 
 Remove a worktree only when required by the task or explicitly requested by the user.
+
+## Writing voice
+
+In both languages:
+
+- prefer direct, concrete sentences;
+- explain necessary jargon at first use;
+- write headings as reader-oriented signposts;
+- avoid promotional claims and vague adjectives;
+- retain the same technical altitude, even when one language needs extra connective explanation.
+
+Chinese prose should read as native technical Chinese rather than English syntax with Chinese words. English prose should read as an original technical article rather than expose Chinese word order or omitted subjects.
+
