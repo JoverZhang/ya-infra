@@ -1,0 +1,6 @@
+interface:
+  display_name: "Write Like a Human"
+  short_description: "Make Chinese AI and technical writing sound human"
+  default_prompt: "Use $write-like-a-human to revise this Chinese AI technical post while preserving my judgment, details, and voice."
+policy:
+  allow_implicit_invocation: true

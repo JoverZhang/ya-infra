@@ -1,8 +1,9 @@
 Upstream source: https://github.com/Pluviobyte/rnskill
 Upstream revision: 7cbf47b57cbae0596d46c10c4a1445cbb27904b3
 
-The files in this skill are copied from the upstream project and are
-distributed under the following license:
+The files in this skill are adapted from the upstream project. The skill was
+renamed, and its identity and interface metadata were revised in English.
+They are distributed under the following license:
 
 Creative Commons Attribution-NonCommercial 4.0 International
 

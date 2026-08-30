@@ -1,9 +1,9 @@
 ---
-name: ra-人话
-description: Chinese AI/tech writing de-AI editor for posts, X/Twitter threads, technical essays, product notes, model reviews, and public-writing drafts. Use when the user asks to 去AI味, 改得像本人, 写推特post, 精修中文AI技术文章, or complains about AI-flavored shells such as 不是A而是B, 真正/其实/本质上, 更重要的是, 冒号讲义腔, 空泛总结, 顺滑但没作者判断的稿子.
+name: write-like-a-human
+description: Rewrite Chinese AI and technical prose to remove formulaic AI patterns while preserving the author's judgment, facts, technical terms, and voice. Use for Chinese posts, X/Twitter threads, technical essays, product notes, model reviews, and public drafts that should sound like the author.
 ---
 
-# ra-人话
+# Write Like a Human
 
 ## Goal
 
