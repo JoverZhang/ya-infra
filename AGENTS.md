@@ -49,7 +49,7 @@ Before making changes, prepare the environment and isolated resources according 
 
 Unless the user explicitly asks to keep changes local, push the task branch and use `gh` to create or update a Draft PR.
 
-Mark the PR as Ready only after all checks pass and `$code-review` issues have been resolved.
+Run the `$code-review` skill while the PR is still in Draft. Resolve all reported findings, rerun the review and required checks against the updated `HEAD`, and mark the PR as Ready for Review only when no unresolved findings remain and all checks pass.
 
 ## Worktree Cleanup
 
