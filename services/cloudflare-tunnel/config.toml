@@ -1,0 +1,4 @@
+metrics_port = 20242
+cpus = 1
+memory = "512m"
+pids_limit = 128

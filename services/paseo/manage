@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""Manage named Paseo instances through the user's rootless Podman socket."""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import socket
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+import urllib.error
+import urllib.request
+
+SERVICE = Path(__file__).resolve().parent
+ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "infra/paseo"
+STATE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "infra/paseo"
+LABELS = {"infra.managed": "true", "infra.service": "paseo", "infra.owner": str(os.getuid())}
+PRIVATE_ROUTES = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10"]
+
+
+def engine(*args, capture=False, check=True, input=None):
+    return subprocess.run(ENGINE + list(args), text=True, input=input, capture_output=capture, check=check)
+
+
+def inspect(kind, name):
+    p = engine(kind, "inspect", name, capture=True, check=False)
+    if p.returncode:
+        # Do not treat a broken engine connection as an absent resource.
+        exists = engine(kind, "exists", name, capture=True, check=False)
+        if exists.returncode == 1:
+            return None
+        raise RuntimeError(p.stderr.strip() or f"Cannot inspect {kind} {name}")
+    return json.loads(p.stdout)[0]
+
+
+def labels_for(instance):
+    return {**LABELS, "infra.instance": instance}
+
+
+def label_args(instance):
+    return [arg for pair in labels_for(instance).items() for arg in ("--label", "=".join(pair))]
+
+
+def owned(data, instance):
+    actual = data.get("Labels") or data.get("labels") or data.get("Config", {}).get("Labels") or {}
+    if not all(actual.get(k) == v for k, v in labels_for(instance).items()):
+        raise RuntimeError(f"Refusing to modify a resource not owned by infra/paseo/{instance}")
+
+
+def versions():
+    with (SERVICE / "versions.toml").open("rb") as f:
+        return tomllib.load(f)
+
+
+def config(instance):
+    if not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", instance):
+        raise ValueError("Instance names must contain lowercase letters, digits and single hyphens")
+    with (SERVICE / "instances" / f"{instance}.toml").open("rb") as f:
+        c = tomllib.load(f)
+    if set(c) - {"port", "hostname", "cpus", "memory", "pids_limit", "image_ref"}:
+        raise ValueError(f"Unknown instance settings in {instance}.toml")
+    if type(c["port"]) is not int or not 1024 <= c["port"] <= 65535:
+        raise ValueError("port must be an integer between 1024 and 65535")
+    if type(c["cpus"]) not in (int, float) or not 0 < c["cpus"] <= 32:
+        raise ValueError("cpus must be positive and at most 32")
+    if type(c["pids_limit"]) is not int or not 64 <= c["pids_limit"] <= 4096:
+        raise ValueError("pids_limit must be between 64 and 4096")
+    if not re.fullmatch(r"[1-9][0-9]*[mg]", c["memory"]):
+        raise ValueError("memory must use a positive m/g value, e.g. 4g")
+    if c["hostname"] and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.-]*", c["hostname"]):
+        raise ValueError("hostname must be an exact DNS hostname")
+    for other in (SERVICE / "instances").glob("*.toml"):
+        with other.open("rb") as f:
+            if other.stem != instance and tomllib.load(f).get("port") == c["port"]:
+                raise ValueError(f"Port {c['port']} also belongs to {other.stem}")
+    c["image_ref"] = c.get("image_ref", versions()["image_ref"])
+    return c
+
+
+def name(instance):
+    return "infra-paseo-" + instance
+
+
+def volumes(instance):
+    return {name(instance) + "-home": "/home/paseo", name(instance) + "-workspace": "/workspace"}
+
+
+def password_file(instance):
+    return CONFIG / instance / "password"
+
+
+def private_directory(path):
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.chmod(0o700)
+
+
+def prepare_password(instance):
+    private_directory(CONFIG)
+    p = password_file(instance)
+    private_directory(p.parent)
+    if not p.exists():
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(secrets.token_urlsafe(32) + "\n")
+    p.chmod(0o600)
+    value = p.read_text().strip()
+    if len(value) < 24 or not re.fullmatch(r"[a-zA-Z0-9_-]+", value):
+        raise ValueError(f"Invalid password format in {p}; use at least 24 URL-safe characters")
+    return value
+
+
+def resource_setup(instance, c):
+    network = name(instance) + "-net"
+    data = inspect("network", network)
+    if data:
+        owned(data, instance)
+        if data.get("driver") != "bridge" or data.get("options", {}).get("isolate") != "strict":
+            raise RuntimeError("Existing instance network does not match the isolation policy")
+    else:
+        routes = [x for cidr in PRIVATE_ROUTES for x in ("--route", cidr + ",blackhole")]
+        # These routes are inside the container. Runtime has no NET_ADMIN capability.
+        engine("network", "create", *label_args(instance), "--opt", "isolate=strict", *routes, network, capture=True)
+    for volume in volumes(instance):
+        data = inspect("volume", volume)
+        if data:
+            owned(data, instance)
+        else:
+            engine("volume", "create", *label_args(instance), volume, capture=True)
+    mounts = [x for volume, target in volumes(instance).items() for x in ("-v", volume + ":" + target)]
+    engine("run", "--rm", "--pull=never", "--network=none", "--http-proxy=false", "--user=0:0",
+           "--cap-drop=all", "--cap-add=CHOWN", "--cap-add=DAC_OVERRIDE", "--cap-add=FOWNER",
+           "--security-opt=no-new-privileges", "--entrypoint=/opt/infra/initialize.sh", *mounts, c["image_ref"], capture=True)
+    return network, mounts
+
+
+def health(instance, c, timeout=45):
+    deadline = time.monotonic() + timeout
+    url = f"http://127.0.0.1:{c['port']}/api/health"
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:
+                if r.status == 200:
+                    return
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            pass
+        time.sleep(1)
+    raise RuntimeError(f"{instance}: health check timed out at {url}; inspect 'just logs paseo {instance}'")
+
+
+def deploy(instance):
+    c = config(instance)
+    image = inspect("image", c["image_ref"])
+    if not image:
+        raise RuntimeError("Pinned image missing. Run 'just build paseo' first")
+    secret = prepare_password(instance)
+    spec = hashlib.sha256(json.dumps({"config": c, "image": image["Id"], "password": secret,
+                                     "implementation": Path(__file__).read_text()}, sort_keys=True).encode()).hexdigest()
+    current = inspect("container", name(instance))
+    if current:
+        owned(current, instance)
+        if current["Config"]["Labels"].get("infra.spec") == spec:
+            if not current["State"]["Running"]:
+                engine("start", name(instance), capture=True)
+            health(instance, c)
+            print(f"{instance}: unchanged, healthy at http://127.0.0.1:{c['port']}")
+            return
+    else:
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", c["port"]))
+            except OSError as e:
+                raise RuntimeError(f"Port {c['port']} is already occupied") from e
+    network, mounts = resource_setup(instance, c)
+    envfile = CONFIG / instance / "runtime.env"
+    envfile.write_text(f"PASEO_PASSWORD={secret}\nPASEO_HOSTNAMES={c['hostname']}\n")
+    envfile.chmod(0o600)
+    old = None
+    old_running = False
+    try:
+        if current:
+            old = name(instance) + "-previous-" + str(time.time_ns())
+            old_running = current["State"]["Running"]
+            engine("stop", name(instance), capture=True)
+            engine("rename", name(instance), old, capture=True)
+        engine("run", "-d", "--pull=never", "--name", name(instance), *label_args(instance),
+               "--label", "infra.spec=" + spec, "--restart=always", "--user=1000:1000",
+               "--init", "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+               "--network", network, "--no-hosts", "--http-proxy=false",
+               "--cpus", str(c["cpus"]), "--memory", c["memory"], "--memory-swap", c["memory"],
+               "--pids-limit", str(c["pids_limit"]), "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
+               "-p", f"127.0.0.1:{c['port']}:6767", "--env-file", str(envfile),
+               "-e", "NPM_CONFIG_PREFIX=/home/paseo/.local",
+               "-e", "PASEO_DICTATION_ENABLED=false", "-e", "PASEO_VOICE_MODE_ENABLED=false",
+               "-e", "PASEO_RELAY_ENABLED=false",
+               *mounts, c["image_ref"], capture=True)
+        health(instance, c)
+    except Exception:
+        failed = inspect("container", name(instance))
+        if failed and old:
+            owned(failed, instance)
+            engine("rm", "-f", name(instance), capture=True)
+        if old:
+            engine("rename", old, name(instance), capture=True)
+            if old_running:
+                engine("start", name(instance), capture=True)
+        raise
+    finally:
+        envfile.unlink(missing_ok=True)
+    if old:
+        engine("rm", old, capture=True)
+    print(f"{instance}: healthy at http://127.0.0.1:{c['port']}")
+    print(f"Password file: {password_file(instance)}")
+
+
+def build():
+    v = versions()
+    if v["build_mode"] != "local-snapshot":
+        raise ValueError("Unsupported build mode")
+    subprocess.run(["python3", str(SERVICE / "prepare-artifacts")], check=True)
+    cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "infra/paseo"
+    artifacts = cache / f"{v['paseo_version']}-{v['codex_version']}-{v['node_version']}-bundle{v['artifact_layout']}"
+    with tempfile.TemporaryDirectory(prefix="build-", dir=cache) as directory:
+        context = Path(directory)
+        for filename in ("Containerfile", "codex.toml", "initialize.sh"):
+            shutil.copy2(SERVICE / filename, context / filename)
+        shutil.copytree(artifacts, context / "artifacts", symlinks=True, copy_function=os.link)
+        engine("build", "--pull=never", "--build-arg", "BASE_IMAGE=" + v["base_image"],
+               "--label", "infra.service=paseo", "--label", "infra.paseo.version=" + v["paseo_version"],
+               "--label", "infra.codex.version=" + v["codex_version"],
+               "-t", v["image_ref"], "-f", str(context / "Containerfile"), str(context))
+
+
+def require_container(instance):
+    config(instance)
+    data = inspect("container", name(instance))
+    if not data:
+        raise RuntimeError(f"{instance}: not deployed")
+    owned(data, instance)
+    return data
+
+
+def status():
+    for path in sorted((SERVICE / "instances").glob("*.toml")):
+        c = config(path.stem)
+        data = inspect("container", name(path.stem))
+        state = "not deployed"
+        if data:
+            owned(data, path.stem)
+            state = data["State"]["Status"]
+            if data["State"]["Running"]:
+                p = engine("exec", name(path.stem), "codex", "login", "status", capture=True, check=False)
+                state += ", codex " + ("authenticated" if p.returncode == 0 else "login needed")
+        print(f"{path.stem:16} {state:32} http://127.0.0.1:{c['port']}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=["build", "deploy", "status", "logs", "stop", "restart", "login", "auth-status", "device-login", "verify", "smoke"])
+    parser.add_argument("instance", nargs="?")
+    args = parser.parse_args()
+    os.umask(0o077)
+    if args.command == "status":
+        status()
+        return
+    if args.command == "build":
+        build()
+        return
+    if args.command == "verify":
+        subprocess.run(["python3", str(SERVICE.parents[1] / "checks/paseo-isolation")], check=True)
+        return
+    if not args.instance:
+        parser.error("this command requires an explicit instance")
+    config(args.instance)
+    private_directory(STATE)
+    with (STATE / f"{args.instance}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if args.command == "deploy":
+            deploy(args.instance)
+            return
+        require_container(args.instance)
+        if args.command == "logs":
+            engine("logs", "--tail=100", name(args.instance))
+        elif args.command in ("stop", "restart"):
+            engine(args.command, name(args.instance))
+            if args.command == "restart":
+                health(args.instance, config(args.instance))
+        elif args.command == "login":
+            # Wizard calls device-login/auth-status, so release this lock first.
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            subprocess.run(["bash", str(SERVICE / "login-wizard.sh"), args.instance], check=True)
+        elif args.command == "auth-status":
+            engine("exec", name(args.instance), "codex", "login", "status")
+        elif args.command == "device-login":
+            tty = ["-it"] if sys.stdin.isatty() else ["-i"]
+            engine("exec", *tty, name(args.instance), "codex", "login", "--device-auth")
+        elif args.command == "smoke":
+            subprocess.run(["python3", str(SERVICE.parents[1] / "checks/paseo-codex"), args.instance], check=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, RuntimeError, FileNotFoundError, subprocess.CalledProcessError) as e:
+        # Engine commands never contain a password or OAuth token argument.
+        detail = getattr(e, "stderr", None) or str(e)
+        print(f"error: {detail.strip()}", file=sys.stderr)
+        sys.exit(1)

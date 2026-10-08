@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Check an explicitly configured HTTPS route and authenticated WebSocket access."""
+import importlib.machinery
+import importlib.util
+import os
+from pathlib import Path
+import secrets
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+loader = importlib.machinery.SourceFileLoader("paseo_manage", str(ROOT / "services/paseo/manage"))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+
+
+def status(hostname, path, password=None):
+    headers = {"Authorization": "Bearer " + password} if password else {}
+    req = urllib.request.Request("https://" + hostname + path, headers=headers)
+    # Do not forward a daemon password if an external policy redirects the request.
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    opener = urllib.request.build_opener(NoRedirect)
+    try:
+        with opener.open(req, timeout=15) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def main(instance):
+    c = m.config(instance)
+    hostname = c["hostname"]
+    if not hostname:
+        raise ValueError("Set an exact public hostname for the instance first")
+    password = m.password_file(instance).read_text().strip()
+    assert status(hostname, "/") == 200, "public web UI must serve successfully"
+    assert status(hostname, "/api/status") == 401, "unauthenticated public API must be denied"
+    assert status(hostname, "/api/status", secrets.token_urlsafe(32)) == 401, "wrong password must be denied"
+    assert status(hostname, "/api/status", password) == 200, "the instance password must be accepted"
+    cli = shutil.which("paseo")
+    if not cli:
+        raise RuntimeError("The local Paseo CLI is required for WebSocket verification")
+    env = {**os.environ, "PASEO_PASSWORD": password}
+    p = subprocess.run([cli, "ls", "--host", f"tcp://{hostname}:443?ssl=true", "--json"],
+                       env=env, capture_output=True, text=True, timeout=30)
+    if p.returncode:
+        raise RuntimeError("Authenticated public WebSocket connection failed")
+    print(f"PASS {instance}: HTTPS web UI, public password enforcement and authenticated WebSocket connection")
+
+
+if __name__ == "__main__":
+    try:
+        if len(sys.argv) != 2:
+            raise ValueError("Pass one explicit instance name")
+        main(sys.argv[1])
+    except Exception as e:
+        print("FAIL " + str(e), file=sys.stderr)
+        sys.exit(1)
