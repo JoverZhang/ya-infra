@@ -26,8 +26,10 @@ def check(condition, message):
     print("PASS " + message)
 
 
-def http(port, path, password=None):
+def http(port, path, password=None, hostname=None):
     headers = {"Authorization": "Bearer " + password} if password else {}
+    if hostname:
+        headers["Host"] = hostname
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -72,6 +74,11 @@ def main():
         check(http(port, "/api/status", passwords[instance])[0] == 200, f"{instance}: own password accepted")
         wrong_password = next((passwords[x] for x in INSTANCES if x != instance), secrets.token_urlsafe(32))
         check(http(port, "/api/status", wrong_password)[0] == 401, f"{instance}: wrong password denied")
+        for hostname in c["hostnames"]:
+            check(http(port, "/api/status", passwords[instance], hostname)[0] == 200,
+                  f"{instance}: declared gateway hostname accepted")
+        check(http(port, "/api/status", passwords[instance], "unlisted.example.invalid")[0] == 403,
+              f"{instance}: undeclared DNS hostname denied")
         execute(instance,
                 "from pathlib import Path; import sys; assert not any(Path(p).exists() for p in sys.argv[1:])",
                 str(ROOT), f"/run/user/{os.getuid()}/podman/podman.sock")

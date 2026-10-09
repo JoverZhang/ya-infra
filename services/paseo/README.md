@@ -69,13 +69,11 @@ explains token-refresh conflicts and why refreshed caches must be persisted.
 
 ## Add a family instance
 
-Copy `examples/family.toml.example` to `instances/<name>.toml`, choose an unused port,
-and optionally set an exact public hostname. Names use lowercase letters, digits
-and single hyphens. For example:
+Copy `examples/family.toml.example` to `instances/<name>.toml` and choose an unused
+port. Names use lowercase letters, digits and single hyphens. For example:
 
 ```toml
 port = 16772
-hostname = "paseo-family.example.com"
 cpus = 2
 memory = "4g"
 pids_limit = 512
@@ -84,6 +82,19 @@ pids_limit = 512
 Then run `just deploy paseo <name>` and `just login paseo <name>`. The two volumes
 are `infra-paseo-<name>-home` and `infra-paseo-<name>-workspace`. Browser files live
 under `/workspace`; local Paseo and Codex sessions live under `/home/paseo`.
+
+For public access, add a separate `gateway/routes/paseo2.toml`:
+
+```toml
+gateway = "public"
+hostname = "paseo2.example.com"
+backend = "paseo/family"
+```
+
+Then run `just gateway plan paseo2` and `just gateway apply paseo2`. Hostnames are
+owned by Route declarations; deployment derives `PASEO_HOSTNAMES` from every
+Route for that instance. Port and resource settings remain in the backend module.
+The shared gateway credential is reused for future family instances.
 
 ## Runtime isolation
 
@@ -134,10 +145,16 @@ login. Volume deletion is deliberately not an operation exposed by this module.
 
 ## Remote browser access
 
-Ports bind to host loopback. A Cloudflare Tunnel hostname should route to
-the appropriate instance port and preserve WebSocket upgrades. Set `hostname`
-before deploying a DNS-based route. Each instance retains its own password.
-No remote route is created by this module.
+Ports bind to host loopback. The [gateway](../../gateway/README.md) resolves the
+appropriate port, deploys the backend with its declared hostnames, and configures
+the Tunnel route and DNS. Each instance retains its own password. The initial
+declaration is `paseo1.example.com → paseo/demo`; publishing it requires the
+gateway's management credential.
+
+This backend exports `endpoint <instance>` as JSON containing `url` and
+`health_path`, and `verify-public <instance> --hostname <declared-hostname>` for
+HTTPS and WebSocket checks. With one Route, `just verify-public paseo demo` is a
+convenience command; multiple Routes should be verified by gateway Route name.
 
 Sources: [Paseo Docker deployment](https://github.com/getpaseo/paseo/blob/main/public-docs/docker.md),
 [Paseo web UI](https://paseo.sh/docs/web-ui),

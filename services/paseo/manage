@@ -19,6 +19,9 @@ import urllib.error
 import urllib.request
 
 SERVICE = Path(__file__).resolve().parent
+sys.path.insert(0, str(SERVICE.parents[1]))
+from gateway.model import hostnames_for
+
 ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "infra/paseo"
 STATE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "infra/paseo"
@@ -65,7 +68,7 @@ def config(instance):
         raise ValueError("Instance names must contain lowercase letters, digits and single hyphens")
     with (SERVICE / "instances" / f"{instance}.toml").open("rb") as f:
         c = tomllib.load(f)
-    if set(c) - {"port", "hostname", "cpus", "memory", "pids_limit", "image_ref"}:
+    if set(c) - {"port", "cpus", "memory", "pids_limit", "image_ref"}:
         raise ValueError(f"Unknown instance settings in {instance}.toml")
     if type(c["port"]) is not int or not 1024 <= c["port"] <= 65535:
         raise ValueError("port must be an integer between 1024 and 65535")
@@ -75,13 +78,12 @@ def config(instance):
         raise ValueError("pids_limit must be between 64 and 4096")
     if not re.fullmatch(r"[1-9][0-9]*[mg]", c["memory"]):
         raise ValueError("memory must use a positive m/g value, e.g. 4g")
-    if c["hostname"] and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.-]*", c["hostname"]):
-        raise ValueError("hostname must be an exact DNS hostname")
     for other in (SERVICE / "instances").glob("*.toml"):
         with other.open("rb") as f:
             if other.stem != instance and tomllib.load(f).get("port") == c["port"]:
                 raise ValueError(f"Port {c['port']} also belongs to {other.stem}")
     c["image_ref"] = c.get("image_ref", versions()["image_ref"])
+    c["hostnames"] = hostnames_for("paseo/" + instance)
     return c
 
 
@@ -180,7 +182,7 @@ def deploy(instance):
                 raise RuntimeError(f"Port {c['port']} is already occupied") from e
     network, mounts = resource_setup(instance, c)
     envfile = CONFIG / instance / "runtime.env"
-    envfile.write_text(f"PASEO_PASSWORD={secret}\nPASEO_HOSTNAMES={c['hostname']}\n")
+    envfile.write_text(f"PASEO_PASSWORD={secret}\nPASEO_HOSTNAMES={','.join(c['hostnames'])}\n")
     envfile.chmod(0o600)
     old = None
     old_running = False
@@ -263,9 +265,12 @@ def status():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["build", "deploy", "status", "logs", "stop", "restart", "login", "auth-status", "device-login", "verify", "smoke"])
+    parser.add_argument("command", choices=["build", "deploy", "status", "logs", "stop", "restart", "login", "auth-status", "device-login", "verify", "smoke", "endpoint", "verify-public"])
     parser.add_argument("instance", nargs="?")
+    parser.add_argument("--hostname")
     args = parser.parse_args()
+    if args.hostname and args.command != "verify-public":
+        parser.error("--hostname is only accepted by verify-public")
     os.umask(0o077)
     if args.command == "status":
         status()
@@ -278,7 +283,14 @@ def main():
         return
     if not args.instance:
         parser.error("this command requires an explicit instance")
-    config(args.instance)
+    c = config(args.instance)
+    if args.command == "endpoint":
+        print(json.dumps({"url": f"http://127.0.0.1:{c['port']}", "health_path": "/api/health"}))
+        return
+    if args.command == "verify-public":
+        extra = ["--hostname", args.hostname] if args.hostname else []
+        subprocess.run(["python3", str(SERVICE.parents[1] / "checks/paseo-public"), args.instance, *extra], check=True)
+        return
     private_directory(STATE)
     with (STATE / f"{args.instance}.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

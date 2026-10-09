@@ -56,27 +56,33 @@ podman --remote --url unix:///run/user/$(id -u)/podman/podman.sock start cloudfl
 This is an immediate rollback. The managed connector's `always` policy may start
 it again at the next boot. No route or credential is deleted by these commands.
 
-## Publish a Paseo instance
+## Gateway publication
 
-The recovered connector token starts the tunnel. No Cloudflare management API
-credential has been supplied to this module. Adding a route therefore requires
-the account's dashboard. A repeatable helper configures the selected hostname,
-redeploys that instance and walks through the dashboard step:
+The recovered connector token starts the tunnel. The separate
+[gateway](../../gateway/README.md) manages hostname routes and DNS using a scoped
+Cloudflare management API token. The connector module owns only the running
+`cloudflared` container, its resources and its connector credential.
 
 ```bash
-bash services/cloudflare-tunnel/publish-paseo-wizard.sh demo paseo-demo.example.com
+just gateway setup
+just gateway plan paseo1
+just gateway apply paseo1
 ```
 
-Only run this when that hostname is the intended route. The human step is to go to
-**Networking → Tunnels → the existing tunnel → Routes → Add route → Published
-application**. Choose that hostname and set its service URL to
-`http://127.0.0.1:<instance-port>`. Keep the existing routes. Each Paseo instance
-continues to require its own daemon password.
+The gateway reads the current remote configuration and merges only the selected
+Route. Existing `privateapi.example.com`, `cpe.example.com`, origin options and the
+catch-all rule are preserved. Each Paseo instance requires its own daemon password.
 
-After saving the route, the helper checks public HTTPS, password enforcement and
-an authenticated WebSocket connection. DNS and certificate propagation may take
-time; rerun `just verify-public paseo demo` if the first check is too early.
-No public route is created by the deployment scripts themselves.
+The old script name remains as a forwarding entry point:
+
+```bash
+bash services/cloudflare-tunnel/publish-paseo-wizard.sh demo paseo1.example.com
+```
+
+It requires an already declared Route and invokes gateway `apply`; it does not
+edit backend settings or offer a second hostname source. DNS and certificate
+propagation may take time. If publication succeeds but the public checks fail,
+rerun `just gateway verify paseo1` after propagation.
 
 Sources: [Cloudflare published application setup](https://developers.cloudflare.com/tunnel/get-started/),
 [cloudflared run parameters](https://developers.cloudflare.com/tunnel/reference/run-parameters/).

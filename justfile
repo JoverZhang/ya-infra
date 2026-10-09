@@ -38,3 +38,6 @@ adopt service legacy:
 
 verify-public service instance:
     @python3 checks/{{service}}-public {{instance}}
+
+gateway command route="":
+    @python3 gateway/manage {{command}} {{route}}

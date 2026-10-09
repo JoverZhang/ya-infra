@@ -1,5 +1,4 @@
 port = 16770
-hostname = ""
 cpus = 2
 memory = "4g"
 pids_limit = 512

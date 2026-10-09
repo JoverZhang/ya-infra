@@ -1,0 +1,4 @@
+provider = "cloudflare-tunnel"
+zone = "example.com"
+account_id = "00000000000000000000000000000000"
+tunnel_id = "00000000-0000-0000-0000-000000000000"

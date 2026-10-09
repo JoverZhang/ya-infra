@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check an explicitly configured HTTPS route and authenticated WebSocket access."""
+import argparse
 import importlib.machinery
 import importlib.util
 import os
@@ -33,16 +34,24 @@ def status(hostname, path, password=None):
         return e.code
 
 
-def main(instance):
+def main(instance, hostname=None):
     c = m.config(instance)
-    hostname = c["hostname"]
     if not hostname:
-        raise ValueError("Set an exact public hostname for the instance first")
+        if len(c["hostnames"]) != 1:
+            raise ValueError("Declare one gateway route or select --hostname explicitly")
+        hostname = c["hostnames"][0]
+    if hostname not in c["hostnames"]:
+        raise ValueError("Hostname is not declared for this backend in gateway/routes")
     password = m.password_file(instance).read_text().strip()
-    assert status(hostname, "/") == 200, "public web UI must serve successfully"
-    assert status(hostname, "/api/status") == 401, "unauthenticated public API must be denied"
-    assert status(hostname, "/api/status", secrets.token_urlsafe(32)) == 401, "wrong password must be denied"
-    assert status(hostname, "/api/status", password) == 200, "the instance password must be accepted"
+    for path, credential, expected, label in [
+        ("/", None, 200, "web UI"),
+        ("/api/status", None, 401, "unauthenticated API"),
+        ("/api/status", secrets.token_urlsafe(32), 401, "wrong-password API"),
+        ("/api/status", password, 200, "authenticated API"),
+    ]:
+        actual = status(hostname, path, credential)
+        if actual != expected:
+            raise RuntimeError(f"Public {label}: HTTP {actual}, expected {expected}")
     cli = shutil.which("paseo")
     if not cli:
         raise RuntimeError("The local Paseo CLI is required for WebSocket verification")
@@ -56,9 +65,11 @@ def main(instance):
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) != 2:
-            raise ValueError("Pass one explicit instance name")
-        main(sys.argv[1])
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("instance")
+        parser.add_argument("--hostname")
+        args = parser.parse_args()
+        main(args.instance, args.hostname)
     except Exception as e:
         print("FAIL " + str(e), file=sys.stderr)
         sys.exit(1)

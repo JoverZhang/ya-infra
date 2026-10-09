@@ -4,8 +4,10 @@
 just verify paseo
 just smoke paseo demo
 just verify cloudflare-tunnel
-# After a public route is configured:
-just verify-public paseo demo
+python3 checks/gateway
+just gateway plan paseo1
+# After publishing the Route:
+just gateway verify paseo1
 ```
 
 `verify paseo` restarts the disposable `demo`, creates temporary persistence
@@ -35,8 +37,29 @@ than trusting the agent's completion status. Its temporary file is removed.
 - Existing origins behaved the same before/after migration: port 28080 responded
   with HTTP 200; port 27310 refused connections before migration and afterwards.
 
-Two-instance runtime isolation has not been exercised yet. Public Paseo route
-verification awaits the hostname and Cloudflare dashboard route. No visual
-browser inspection or machine reboot was performed. Existing public hostnames
-returned Cloudflare HTTP 403 from this runner, so full external request delivery
-to those origins was not established by the migration checks.
+## Gateway checks on 2026-10-09
+
+- Fifteen offline checks passed: preservation of unrelated configuration and
+  rule options/order, DNS and origin conflicts, path-rule protection, drift
+  during deployment, backend health failure, idempotence, DNS failure/retry,
+  failed public verification, declaration validation and private credentials.
+- `paseo1.example.com → paseo/demo` is declared. Plan and status work without the
+  management API token and report remote state as unknown. Missing credentials
+  stopped apply before backend replacement or cloud writes.
+- Demo redeployment retained its Codex login. Runtime isolation and restart
+  persistence checks passed again. The declared hostname was accepted locally;
+  an undeclared DNS hostname was denied. Real Codex inference through Paseo
+  produced and read the expected workspace file, then the temporary file was
+  removed. The bundled web UI and password authentication passed locally.
+- Python syntax, shell syntax and an exact comparison of the credential
+  wizard's shared library to the skill template passed. Shellcheck is not
+  installed. The interactive credential wizard was inspected statically.
+- No management API credential is available yet, so no live gateway API write
+  has been exercised. Public verification was attempted and failed during TLS
+  with `UNEXPECTED_EOF_WHILE_READING`; the Route is not marked verified. Run the
+  credential wizard, apply the Route and repeat its public checks before sharing.
+
+Two-instance runtime isolation has not been exercised yet. No visual browser
+inspection or machine reboot was performed. Existing public hostnames returned
+Cloudflare HTTP 403 from this runner, so full external request delivery to those
+origins was not established by the migration checks.
