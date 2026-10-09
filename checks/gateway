@@ -217,6 +217,52 @@ class DeclarationChecks(unittest.TestCase):
 
 
 class CredentialDiagnosticsChecks(unittest.TestCase):
+    def test_provider_ip_restriction_is_not_reported_as_missing_zone_permission(self):
+        for address, cidr in [("192.0.2.10", "192.0.2.10/32"), ("2001:db8::10", "2001:db8::10/128")]:
+            with self.subTest(address=address):
+                client = Client(GATEWAY, token="test-only-credential-value")
+                payload = json.dumps({"errors": [{"code": 9109,
+                    "message": "Cannot use the access token from location: " + address}]}).encode()
+                client.opener = Mock()
+                client.opener.open.side_effect = urllib.error.HTTPError(
+                    "https://api.cloudflare.com/client/v4/zones", 403, "Forbidden", {}, io.BytesIO(payload))
+                with self.assertRaises(RuntimeError) as error:
+                    client.zone_id()
+                message = str(error.exception)
+                self.assertIn(cidr, message)
+                self.assertIn("IP", message)
+                self.assertNotIn("Zone → Zone → Read", message)
+
+    def test_ip_restriction_prefix_with_invalid_address_cannot_echo_secret(self):
+        token = "test-only-credential-value"
+        for candidate in [token, "fe80::1%" + token]:
+            with self.subTest(candidate=candidate):
+                client = Client(GATEWAY, token=token)
+                payload = json.dumps({"errors": [{"code": 9109,
+                    "message": "Cannot use the access token from location: " + candidate}]}).encode()
+                client.opener = Mock()
+                client.opener.open.side_effect = urllib.error.HTTPError(
+                    "https://api.cloudflare.com/client/v4/zones", 403, "Forbidden", {}, io.BytesIO(payload))
+                with self.assertRaises(RuntimeError) as error:
+                    client.zone_id()
+                self.assertNotIn(token, str(error.exception))
+                self.assertNotIn("Zone → Zone → Read", str(error.exception))
+
+    def test_ip_blocked_diagnostics_do_not_claim_missing_zone_permissions(self):
+        client = Mock()
+        client.verify_token.return_value = {"status": "active"}
+        client.zone_id.side_effect = APIError("GET", "/zones", 403, [9109], reason="client_ip")
+        client.configuration.return_value = {"config": ORIGINAL}
+        messages = []
+        with self.assertRaisesRegex(RuntimeError, "blocked by token Client IP Address Filtering"):
+            check_credentials(client, [ROUTE], emit=messages.append)
+        self.assertTrue(any(x.startswith("BLOCKED Zone / Zone / Read") for x in messages))
+        self.assertFalse(any(x.startswith("FAIL Zone / Zone / Read") for x in messages))
+        self.assertNotIn("fix Zone / Zone / Read", "\n".join(messages))
+        client.configuration.assert_called_once()
+        client.create_record.assert_not_called()
+        client.update_configuration.assert_not_called()
+
     def test_zone_denial_identifies_endpoint_permission_and_resource_without_secrets(self):
         token = "test-only-credential-value"
         client = Client(GATEWAY, token=token)

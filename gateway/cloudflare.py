@@ -1,4 +1,5 @@
 """Cloudflare management credentials and the small API surface used by gateway."""
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -13,22 +14,54 @@ class MissingCredentials(RuntimeError):
 
 
 class APIError(RuntimeError):
-    def __init__(self, method, path, status, codes, hint=""):
+    def __init__(self, method, path, status, codes, hint="", *, reason=None, client_ip=None):
         self.status = status
         self.codes = codes
+        self.reason = reason
         endpoint = urllib.parse.urlsplit(path).path
         message = f"Cloudflare {method} {endpoint} failed: HTTP {status}, error codes {codes}"
-        if hint and status in (401, 403):
+        if reason == "client_ip":
+            message += ". Blocked by token Client IP Address Filtering"
+            if client_ip is not None:
+                message += f"; allow {client_ip}/{client_ip.max_prefixlen} or remove the entire IP filter rule"
+            else:
+                message += "; remove the entire IP filter rule or allow this server's outgoing IP"
+            message += " and save the token. This response does not establish missing permissions"
+        elif hint and status in (401, 403):
             message += ". Check " + hint
-        if status in (401, 403):
+        if reason != "client_ip" and status in (401, 403):
             message += ". Also check Client IP Address Filtering and token restrictions"
         super().__init__(message)
 
 
 def error_codes(response):
     # Never print provider messages, which can echo credentials or request data.
-    return [x["code"] for x in response.get("errors", [])
+    errors = response.get("errors", []) if isinstance(response, dict) else []
+    if not isinstance(errors, list):
+        return []
+    return [x["code"] for x in errors
             if isinstance(x, dict) and type(x.get("code")) is int]
+
+
+def error_reason(response):
+    """Recognize the provider's explicit IP denial without exposing its message."""
+    prefix = "Cannot use the access token from location:"
+    errors = response.get("errors", []) if isinstance(response, dict) else []
+    if not isinstance(errors, list):
+        return None, None
+    for error in errors:
+        message = error.get("message") if isinstance(error, dict) else None
+        if isinstance(message, str) and message.startswith(prefix):
+            candidate = message[len(prefix):].strip()
+            try:
+                # IPv6 scope IDs may contain arbitrary text; never echo them.
+                if "%" in candidate:
+                    raise ValueError
+                address = ipaddress.ip_address(candidate)
+            except ValueError:
+                address = None
+            return "client_ip", address
+    return None, None
 
 
 def credentials_file():
@@ -91,19 +124,23 @@ class Client:
                 response = json.load(r)
                 status = r.status
         except urllib.error.HTTPError as e:
-            # Provider errors may echo inputs; show codes, never response bodies.
+            # Only numeric codes, known causes and validated IPs reach errors.
             try:
-                codes = error_codes(json.loads(e.read()))
+                response = json.loads(e.read())
             except (ValueError, TypeError, AttributeError):
-                codes = []
+                response = {}
             finally:
                 e.close()
-            raise APIError(method, path, e.code, codes, self.permission_hint(method, path)) from None
+            reason, client_ip = error_reason(response)
+            raise APIError(method, path, e.code, error_codes(response), self.permission_hint(method, path),
+                           reason=reason, client_ip=client_ip) from None
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             endpoint = urllib.parse.urlsplit(path).path
             raise RuntimeError(f"Cloudflare {method} {endpoint} request could not complete; rerun plan before retrying") from None
         if not response.get("success"):
-            raise APIError(method, path, status, error_codes(response), self.permission_hint(method, path))
+            reason, client_ip = error_reason(response)
+            raise APIError(method, path, status, error_codes(response), self.permission_hint(method, path),
+                           reason=reason, client_ip=client_ip)
         return response["result"]
 
     def verify_token(self):

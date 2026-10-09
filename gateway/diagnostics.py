@@ -1,16 +1,22 @@
 """Report independent Cloudflare read checks without changing remote resources."""
+from gateway.cloudflare import APIError
 
 
 def check_credentials(client, routes, emit=print):
     failures = []
+    blocked = []
 
     def check(label, operation, describe=lambda value: "read access confirmed"):
         try:
             value = operation()
             detail = describe(value)
         except (RuntimeError, ValueError) as error:
-            failures.append(label)
-            emit(f"FAIL {label}: {error}")
+            if isinstance(error, APIError) and error.reason == "client_ip":
+                blocked.append(label)
+                emit(f"BLOCKED {label}: {error}")
+            else:
+                failures.append(label)
+                emit(f"FAIL {label}: {error}")
             return None
         emit(f"PASS {label}: {detail}")
         return value
@@ -28,8 +34,14 @@ def check_credentials(client, routes, emit=print):
         for route in routes:
             check(f"Zone / DNS / Read ({route.name})", lambda route=route: client.records(route.hostname))
     else:
-        emit("SKIP Zone / DNS / Read: Zone ID unavailable; fix Zone / Zone / Read or its resource scope first")
+        emit("SKIP Zone / DNS / Read: Zone ID unavailable; resolve the Zone lookup result above first")
     emit("NOT TESTED write permissions: Account / cloudflared / Edit and Zone / DNS / Edit; apply exercises writes")
+    problems = []
+    if blocked:
+        problems.append("blocked by token Client IP Address Filtering: " + ", ".join(blocked)
+                        + ". Save an IP rule that allows the address reported above, or remove the entire rule")
     if failures:
-        raise RuntimeError("Cloudflare credential checks failed: " + ", ".join(failures)
-                           + ". Check the existing token's permission rows, resource scopes and IP filter")
+        problems.append("failed: " + ", ".join(failures)
+                        + ". Check the existing token's permission rows, resource scopes and restrictions")
+    if problems:
+        raise RuntimeError("Cloudflare credential checks " + "; ".join(problems))

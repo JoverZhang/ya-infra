@@ -65,15 +65,21 @@ The subsequently supplied token verified as active. Zone lookup returned
 HTTP 403/code 9109; Tunnel configuration and a direct DNS read using the supplied
 Zone ID returned HTTP 401/code 10000. The dashboard settings supplied by the
 owner contained Zone Custom Assets in place of Zone Read, and displayed an IP
-Include value of `0.0.0.0`. Zone Read must be added; if that IP value is an actual
-filter rather than a placeholder, the rule must be removed for this setup.
+Include value of `0.0.0.0`. After the owner reported token edits, the failures
+persisted. Inspecting the provider message in memory established the cause:
+Cloudflare explicitly rejected this server's outgoing IPv4 address under the
+token's Client IP Address Filtering condition. The message and token secret were
+not logged. Further read checks still report this IP block; the effective token
+condition needs correcting before permissions can be verified.
 
 The revised credential check reports independent results, permissions and
 resource scopes, keeps secrets/provider messages out of errors, and labels
-unexercised write permissions explicitly. Twenty offline checks pass, including
-regressions for hidden Tunnel failures, actionable Zone errors, credential
-redaction, account token verification and read-only diagnostics. Actual token
-policy corrections and public publication are still pending.
+unexercised write permissions explicitly. Confirmed IP denials now report
+`BLOCKED` and a validated allow-list CIDR without suggesting a missing Zone
+permission. Twenty-three offline checks pass, including hidden Tunnel failures,
+actionable Zone errors, IPv4/IPv6 IP denial classification, credential redaction
+(including IPv6 scope IDs), account token verification and read-only diagnostics.
+Token condition correction and public publication are still pending.
 
 Two-instance runtime isolation has not been exercised yet. No visual browser
 inspection or machine reboot was performed. Existing public hostnames returned

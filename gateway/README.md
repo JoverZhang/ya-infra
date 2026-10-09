@@ -61,15 +61,19 @@ placed in command arguments. The browser password for Paseo remains separate.
 configuration read and DNS read separately. A failed Zone lookup does not hide
 the Tunnel check; DNS is labeled skipped if its Zone ID cannot be resolved. A
 read check cannot prove an Edit permission, so write permissions are explicitly
-labeled untested until `apply`. Authorization errors name the API endpoint,
-required permission and resource scope while keeping provider messages private.
+labeled untested until `apply`. Authorization errors name the API endpoint and
+suggest the permission and resource scope to inspect. An explicit provider IP
+denial is labeled `BLOCKED`, with the validated outgoing IP and its allow-list
+CIDR, rather than a missing permission. Provider messages remain private.
 
 If a token is active but these reads fail, edit its existing permission rows and
 resource scopes in the dashboard. `Zone → Zone → Read` is a separate permission
 from DNS Edit and Zone Custom Assets; the Zone Read permission ID is
 `c8fed203ed3043cba015a93ad1616f1f`. Check that any client IP filter allows this
-server's actual outgoing address. Leave the optional filter empty for this setup;
-an Include rule for the single address `0.0.0.0` does not allow all clients. A
+server's actual outgoing address. Remove the entire optional filter rule to
+disable filtering; clearing its input field is not sufficient. Alternatively,
+allow the exact IP/CIDR reported by `check-credentials`, and review Exclude rules
+as well. An Include rule for the single address `0.0.0.0` does not allow all clients. A
 token's active status alone does not prove that its permissions or conditions
 permit the current request. After saving permission changes, rerun
 `just gateway check-credentials`; reuse the private credential file when the
