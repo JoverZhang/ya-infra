@@ -75,7 +75,9 @@ disable filtering; clearing its input field is not sufficient. Alternatively,
 allow the exact IP/CIDR reported by `check-credentials`, and review Exclude rules
 as well. An Include rule for the single address `0.0.0.0` does not allow all clients. A
 token's active status alone does not prove that its permissions or conditions
-permit the current request. After saving permission changes, rerun
+permit the current request: Cloudflare's
+[Verify Token endpoint does not apply client IP filtering](https://developers.cloudflare.com/fundamentals/api/how-to/restrict-tokens/#client-ip-address-range-filtering).
+After saving permission changes, rerun
 `just gateway check-credentials`; reuse the private credential file when the
 token secret is unchanged. The setup wizard also supports editing an existing
 token and pressing Enter to keep its saved secret.
