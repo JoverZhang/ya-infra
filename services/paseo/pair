@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Print one direct connection URI for a declared public Paseo environment."""
+import argparse
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+from urllib.parse import urlencode
+
+SERVICE = Path(__file__).resolve().parent
+sys.path.insert(0, str(SERVICE.parents[1]))
+from gateway.model import IDENTIFIER, hostnames_for
+
+
+def pairing_link(instance, hostname=None):
+    if not re.fullmatch(IDENTIFIER, instance):
+        raise ValueError("Use a valid Paseo instance name")
+    if not (SERVICE / "instances" / (instance + ".toml")).is_file():
+        raise ValueError("Unknown Paseo instance: " + instance)
+    hosts = hostnames_for("paseo/" + instance)
+    if hostname:
+        if hostname not in hosts:
+            raise ValueError("Hostname is not declared for this Paseo instance")
+    elif len(hosts) == 1:
+        hostname = hosts[0]
+    else:
+        raise ValueError("Declare one public Route for this instance, or select its hostname explicitly")
+    config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    password_file = config / "infra/paseo" / instance / "password"
+    if not password_file.is_file():
+        raise ValueError("Instance password missing; deploy the Paseo instance first")
+    if stat.S_IMODE(password_file.stat().st_mode) & 0o077:
+        raise ValueError("Instance password file must be private (mode 0600)")
+    password = password_file.read_text().strip()
+    if len(password) < 24 or not re.fullmatch(r"[a-zA-Z0-9_-]+", password):
+        raise ValueError("Invalid instance password format; its value is not displayed")
+    return "tcp://" + hostname + ":443?" + urlencode({"ssl": "true", "password": password})
+
+
+if __name__ == "__main__":
+    try:
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("instance")
+        parser.add_argument("hostname", nargs="?")
+        args = parser.parse_args()
+        print(pairing_link(args.instance, args.hostname))
+    except (ValueError, OSError) as error:
+        print("error: " + str(error), file=sys.stderr)
+        sys.exit(1)

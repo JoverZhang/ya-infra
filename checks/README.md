@@ -5,6 +5,8 @@ just verify paseo
 just smoke paseo demo
 just verify cloudflare-tunnel
 just verify paseo-web
+# Prints a credential-bearing link; paste it in the shared website:
+just pair paseo demo
 python3 checks/gateway
 just gateway plan paseo1
 # After publishing the Route:
@@ -128,3 +130,27 @@ Two-instance runtime isolation has not been exercised yet. No visual browser
 inspection or machine reboot was performed. Existing public hostnames returned
 Cloudflare HTTP 403 from this runner, so full external request delivery to those
 origins was not established by the migration checks.
+
+## Direct pairing import verified on 2026-10-09
+
+- `just -f ~/infra/justfile pair paseo demo` was exercised from outside the
+  repository. It emitted exactly one line containing the declared public host,
+  port 443, TLS and the correct private instance password. An unrelated hostname
+  was rejected without printing the link or password.
+- The shared UI's pinned pairing dialog was extended to accept direct TCP URIs
+  through its existing parser and authenticated probe/save operation. Bundle
+  syntax, regenerated gzip and the new content hash passed. All verified source
+  assets stayed byte-for-byte unchanged despite hard-linked build inputs; an
+  incompatible dialog was rejected. Build and non-root runtime checks passed.
+- Chromium imported the generated line, authenticated to the public demo
+  WebSocket and saved host, TLS and password. The connection survived a reload;
+  repeated import reused the saved environment. A malformed URI and a wrong
+  password were rejected without saving a host.
+- For browser interaction checks, Chromium loaded the exact deployed UI assets
+  over loopback under the shared HTTPS Origin and connected to the real public
+  backend. Direct browser navigation to Cloudflare timed out from this runner.
+  The separate public HTTPS/assets/CORS/authentication/WebSocket checks passed
+  and the frontend Route is recorded as `verified`.
+
+The browser checks above exercise functional interactions; no manual visual
+layout review or machine reboot was performed.

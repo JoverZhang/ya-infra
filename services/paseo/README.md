@@ -151,7 +151,12 @@ the Tunnel route and DNS. Each instance retains its own password. The initial
 declaration is `paseo1.example.com → paseo/demo`; publishing it requires the
 gateway's management credential.
 
-Open the shared [paseo.example.com](https://paseo.example.com) website and add Host
+Run `just pair paseo demo` and paste its single output line into **Paste pairing
+link** on the shared [paseo.example.com](https://paseo.example.com) website. The link
+includes that instance's public host, TLS and password. Use the instance name for
+each family environment; an optional final hostname selects among aliases.
+
+For manual **Direct connection** setup, add Host
 `paseo1.example.com`, Port `443`, **Use SSL** enabled, with the `demo` password from
 `~/.config/infra/paseo/demo/password`. The shared UI has its own
 [deployment module](../paseo-web/README.md). Connection settings are saved in each

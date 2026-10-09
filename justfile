@@ -21,6 +21,9 @@ login service instance:
 auth-status service instance:
     @python3 services/{{service}}/manage auth-status {{instance}}
 
+pair service instance hostname="":
+    @python3 services/{{service}}/pair {{instance}} {{hostname}}
+
 stop service instance="":
     @python3 services/{{service}}/manage stop {{instance}}
 

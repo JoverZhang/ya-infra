@@ -8,8 +8,24 @@ to use. The website is the shared client; each host is a separate Paseo daemon:
 | `https://paseo.example.com` | Shared browser UI, served by `paseo-web/main` |
 | `paseo1.example.com:443`, SSL enabled | `paseo/demo` environment |
 
-In **Direct connection**, enter Host `paseo1.example.com`, Port `443`, enable
-**Use SSL**, and enter the password from `~/.config/infra/paseo/demo/password`.
+Generate a complete connection link with one command, from any directory:
+
+```bash
+just -f ~/infra/justfile pair paseo demo
+```
+
+Copy the single output line, open the shared website, choose **Paste pairing
+link**, paste and select **Pair**. Refresh an already open website tab to load
+the direct-link importer. The `tcp://...:443?ssl=true&password=...` line includes
+the instance password; share it only with the people who should use that
+environment. For another instance, replace `demo` with its name. If an instance
+has multiple declared public hostnames, append the desired hostname to the
+command. Generating the link reads local declarations and the existing private
+password; it makes no network request or deployment change.
+
+For manual setup in **Direct connection**, enter Host `paseo1.example.com`, Port
+`443`, enable **Use SSL**, and enter the password from
+`~/.config/infra/paseo/demo/password`.
 The advanced Connection URI is `tcp://paseo1.example.com:443?ssl=true`; keep the
 password in its separate field.
 
@@ -42,8 +58,17 @@ origin allowance is not used. Apply the environment Routes before the shared UI;
 `just gateway apply` automatically uses this order. Shared UI public verification
 also checks the declared environments, so they must already be available.
 
-The image copies only the bundled web assets from the same verified program
-snapshot used by `services/paseo`. It uses digest-pinned unprivileged NGINX,
+The image copies the bundled web assets from the same verified program snapshot
+used by `services/paseo`. A small extension lets the pinned Paseo 0.9.1
+**Paste pairing link** dialog accept direct TCP connection URIs, using the app's
+existing URI parser and authenticated probe/save operation. The generated link
+works in this shared frontend; a daemon-served page can use it in **Direct
+connection → Advanced → Connection URI**. The version check in `pairing.py`
+requires the exact expected dialog hash, and the build checks JavaScript syntax.
+An upstream change requires review before rebuilding. The patched bundle gets a
+new content hash and gzip asset; hard-linked verified inputs stay unchanged.
+
+The runtime uses digest-pinned unprivileged NGINX,
 UID/GID 101, a read-only root filesystem, zero capabilities, no-new-privileges,
 CPU/memory/PID limits and an internal bridge network. It publishes only
 `127.0.0.1:16780`, has no persistent data or credential mounts, and includes no

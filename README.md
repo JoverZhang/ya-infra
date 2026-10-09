@@ -9,6 +9,7 @@ just --list
 just build paseo
 just deploy paseo demo
 just status paseo
+just pair paseo demo
 just verify paseo
 just smoke paseo demo
 just status cloudflare-tunnel
@@ -45,11 +46,12 @@ port. The shared Cloudflare Tunnel carries traffic for all routes. This is a
 local control module with Gateway/Route concepts; it adds no proxy or Kubernetes
 runtime. Backend instances keep their own files, sessions, login and password.
 
-The shared browser entry is [paseo.example.com](https://paseo.example.com). Add
-`paseo1.example.com` as a Direct connection with port `443`, SSL enabled and the
-`demo` password from `~/.config/infra/paseo/demo/password`. The shared UI keeps
-each browser's connection catalog; the selected environment holds sessions and
-files. See [shared UI operations](services/paseo-web/README.md).
+The shared browser entry is [paseo.example.com](https://paseo.example.com). Run
+`just pair paseo demo` and paste its one-line output into **Paste pairing link**.
+It includes the declared public hostname, port 443, TLS and that instance's
+password. The shared UI keeps each browser's connection catalog; the selected
+environment holds sessions and files. Treat the generated link as the instance
+password. See [shared UI operations](services/paseo-web/README.md).
 
 For a fresh installation, set up the management credential once, then publish:
 
