@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 from gateway import model
 from gateway.cloudflare import Client, MissingCredentials, credentials_file
 from gateway.controller import Controller, State, healthy
+from gateway.diagnostics import check_credentials
 
 STATE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "infra/gateway/public"
 
@@ -51,11 +52,7 @@ def main():
         missing = str(e)
     controller = Controller(client, state)
     if args.command == "check-credentials":
-        client.zone_id()
-        client.configuration()
-        for r in selected:
-            client.records(r.hostname)
-        print("Cloudflare account, zone, tunnel and DNS read access confirmed; apply will exercise write permissions")
+        check_credentials(client, selected)
         return
     if args.command in ("apply", "verify"):
         STATE.mkdir(parents=True, exist_ok=True, mode=0o700)

@@ -20,6 +20,7 @@ sessions and passwords. Sharing an OpenAI login account still shares account usa
 ```bash
 cd ~/infra
 just gateway setup                 # One-time, human API token creation
+just gateway check-credentials     # Report token, Zone, Tunnel and DNS checks independently
 just gateway plan paseo1           # Read-only remote preview
 just gateway apply paseo1          # Deploy backend, merge route, DNS, public checks
 just gateway status paseo1         # Local health, last publication, remote diff
@@ -55,6 +56,25 @@ write permissions are exercised by `apply`. `CLOUDFLARE_API_TOKEN` or
 absent. Credential directories follow `XDG_CONFIG_HOME` if set. API headers,
 token values and provider response bodies are not printed; credentials are not
 placed in command arguments. The browser password for Paseo remains separate.
+
+`check-credentials` reports the token's active status, Zone lookup, Tunnel
+configuration read and DNS read separately. A failed Zone lookup does not hide
+the Tunnel check; DNS is labeled skipped if its Zone ID cannot be resolved. A
+read check cannot prove an Edit permission, so write permissions are explicitly
+labeled untested until `apply`. Authorization errors name the API endpoint,
+required permission and resource scope while keeping provider messages private.
+
+If a token is active but these reads fail, edit its existing permission rows and
+resource scopes in the dashboard. `Zone → Zone → Read` is a separate permission
+from DNS Edit and Zone Custom Assets; the Zone Read permission ID is
+`c8fed203ed3043cba015a93ad1616f1f`. Check that any client IP filter allows this
+server's actual outgoing address. Leave the optional filter empty for this setup;
+an Include rule for the single address `0.0.0.0` does not allow all clients. A
+token's active status alone does not prove that its permissions or conditions
+permit the current request. After saving permission changes, rerun
+`just gateway check-credentials`; reuse the private credential file when the
+token secret is unchanged. The setup wizard also supports editing an existing
+token and pressing Enter to keep its saved secret.
 
 ## Apply and recovery
 

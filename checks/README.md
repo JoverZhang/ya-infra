@@ -54,10 +54,26 @@ than trusting the agent's completion status. Its temporary file is removed.
 - Python syntax, shell syntax and an exact comparison of the credential
   wizard's shared library to the skill template passed. Shellcheck is not
   installed. The interactive credential wizard was inspected statically.
-- No management API credential is available yet, so no live gateway API write
-  has been exercised. Public verification was attempted and failed during TLS
+- Initial checks had no management API credential, so no live gateway API write
+  was exercised. Public verification was attempted and failed during TLS
   with `UNEXPECTED_EOF_WHILE_READING`; the Route is not marked verified. Run the
   credential wizard, apply the Route and repeat its public checks before sharing.
+
+## Credential diagnosis on 2026-10-09
+
+The subsequently supplied token verified as active. Zone lookup returned
+HTTP 403/code 9109; Tunnel configuration and a direct DNS read using the supplied
+Zone ID returned HTTP 401/code 10000. The dashboard settings supplied by the
+owner contained Zone Custom Assets in place of Zone Read, and displayed an IP
+Include value of `0.0.0.0`. Zone Read must be added; if that IP value is an actual
+filter rather than a placeholder, the rule must be removed for this setup.
+
+The revised credential check reports independent results, permissions and
+resource scopes, keeps secrets/provider messages out of errors, and labels
+unexercised write permissions explicitly. Twenty offline checks pass, including
+regressions for hidden Tunnel failures, actionable Zone errors, credential
+redaction, account token verification and read-only diagnostics. Actual token
+policy corrections and public publication are still pending.
 
 Two-instance runtime isolation has not been exercised yet. No visual browser
 inspection or machine reboot was performed. Existing public hostnames returned

@@ -203,12 +203,14 @@ if [[ -f "$ENV_FILE" ]] && python3 "$infra_root/gateway/manage" check-credential
   say "Existing management credential can read the configured account, tunnel and DNS."
 else
   banner "Cloudflare public gateway — management credential"
-  stage "Create a scoped management API token"
+  stage "Create or repair a scoped management API token"
   open_url "https://dash.cloudflare.com/profile/api-tokens/"
-  step "Select Create Token → Create Custom Token; name it infra-public-gateway."
+  step "For an existing infra-public-gateway token, select Edit. Otherwise Create Token → Create Custom Token."
   step "Add Account → Cloudflare One Connector: cloudflared → Edit."
   note "If your dashboard uses the older Cloudflare Tunnel → Edit permission, it is also accepted."
-  step "Add Zone → DNS → Edit and Zone → Zone → Read."
+  step "Add a separate permission row: Zone → DNS → Edit."
+  step "Add another permission row: Zone → Zone → Read."
+  note "Choose Zone itself, not Zone Custom Assets. Zone Read ID: c8fed203ed3043cba015a93ad1616f1f."
   gateway_account="$(python3 - "$infra_root" <<'PY_ACCOUNT'
 import sys
 sys.path.insert(0, sys.argv[1])
@@ -225,9 +227,10 @@ PY_ZONE
 )"
   step "Restrict Account Resources to the account with ID $gateway_account."
   step "Restrict Zone Resources to the specific zone $gateway_zone."
-  step "Continue to summary, review the scope, select Create Token, and copy its secret."
+  step "Leave Client IP Address Filtering empty; remove any Include/in rule containing 0.0.0.0."
+  step "Review and save edits, or Create Token and copy its secret. Name new tokens infra-public-gateway."
   note "Use the management API token, rather than the existing cloudflared connector token."
-  ask_secret CLOUDFLARE_API_TOKEN "Paste the API token (hidden):"
+  ask_secret CLOUDFLARE_API_TOKEN "Paste the API token (hidden); Enter keeps the existing secret after permission edits:"
   if [[ ${#CLOUDFLARE_API_TOKEN} -lt 20 || "$CLOUDFLARE_API_TOKEN" =~ [[:space:]] ]]; then
     warn "The token is empty or malformed. Nothing was saved."
     exit 1

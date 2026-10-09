@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """Offline checks for route conflicts, preservation, drift and partial publication."""
 from copy import deepcopy
+from contextlib import redirect_stdout
+import importlib.machinery
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+import urllib.error
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from gateway import model
-from gateway.cloudflare import MissingCredentials, api_token
+from gateway.cloudflare import APIError, Client, MissingCredentials, api_token
+from gateway.diagnostics import check_credentials
 from gateway.controller import Conflict, Controller, State
 
 ROUTE = model.Route("paseo1", "public", "paseo1.example.org", "paseo/demo")
@@ -208,6 +214,78 @@ class DeclarationChecks(unittest.TestCase):
                 api_token()
             p.chmod(0o600)
             self.assertEqual(api_token(), "test-only-credential-value")
+
+
+class CredentialDiagnosticsChecks(unittest.TestCase):
+    def test_zone_denial_identifies_endpoint_permission_and_resource_without_secrets(self):
+        token = "test-only-credential-value"
+        client = Client(GATEWAY, token=token)
+        payload = json.dumps({"errors": [{"code": 9109, "message": token}]}).encode()
+        failure = urllib.error.HTTPError("https://api.cloudflare.com/client/v4/zones", 403,
+                                         "Forbidden", {}, io.BytesIO(payload))
+        client.opener = Mock()
+        client.opener.open.side_effect = failure
+        with self.assertRaises(RuntimeError) as error:
+            client.zone_id()
+        message = str(error.exception)
+        self.assertIn("GET /zones", message)
+        self.assertIn("Zone → Zone → Read", message)
+        self.assertIn(GATEWAY["zone"], message)
+        self.assertNotIn(token, message)
+
+    def test_zone_failure_does_not_hide_tunnel_denial(self):
+        loader = importlib.machinery.SourceFileLoader("gateway_manage_checks", str(ROOT / "gateway/manage"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        manage = importlib.util.module_from_spec(spec)
+        loader.exec_module(manage)
+        client = Mock()
+        client.verify_token.return_value = {"status": "active"}
+        client.zone_id.side_effect = RuntimeError("HTTP 403, error codes [9109]")
+        client.configuration.side_effect = RuntimeError("HTTP 401, error codes [10000]")
+        output = io.StringIO()
+        with patch.object(manage, "Client", return_value=client), \
+                patch.object(sys, "argv", ["gateway/manage", "check-credentials"]), redirect_stdout(output):
+            with self.assertRaises(RuntimeError):
+                manage.main()
+        client.configuration.assert_called_once()
+        client.records.assert_not_called()
+        self.assertIn("[9109]", output.getvalue())
+        self.assertIn("[10000]", output.getvalue())
+        self.assertIn("SKIP", output.getvalue())
+
+    def test_successful_read_checks_never_claim_or_exercise_write_permissions(self):
+        client = Mock()
+        client.verify_token.return_value = {"status": "active"}
+        client.zone_id.return_value = "zone-1"
+        client.configuration.return_value = {"config": ORIGINAL}
+        client.records.return_value = []
+        messages = []
+        check_credentials(client, [ROUTE], emit=messages.append)
+        client.records.assert_called_once_with(ROUTE.hostname)
+        client.create_record.assert_not_called()
+        client.update_configuration.assert_not_called()
+        self.assertEqual(sum(x.startswith("PASS") for x in messages), 4)
+        self.assertTrue(messages[-1].startswith("NOT TESTED write permissions"))
+
+    def test_account_owned_token_uses_its_verification_endpoint(self):
+        client = Client(GATEWAY, token="test-only-credential-value")
+        denied = APIError("GET", "/user/tokens/verify", 403, [9109])
+        with patch.object(client, "request", side_effect=[denied, {"status": "active"}]) as request:
+            self.assertEqual(client.verify_token(), {"status": "active"})
+        self.assertEqual(request.call_args_list[1].args,
+                         ("GET", f"/accounts/{GATEWAY['account_id']}/tokens/verify"))
+
+    def test_non_numeric_provider_error_codes_cannot_echo_a_credential(self):
+        token = "test-only-credential-value"
+        client = Client(GATEWAY, token=token)
+        payload = json.dumps({"errors": [{"code": token, "message": token}]}).encode()
+        client.opener = Mock()
+        client.opener.open.side_effect = urllib.error.HTTPError(
+            "https://api.cloudflare.com/client/v4/zones", 403, "Forbidden", {}, io.BytesIO(payload))
+        with self.assertRaises(RuntimeError) as error:
+            client.zone_id()
+        self.assertNotIn(token, str(error.exception))
+        self.assertIn("error codes []", str(error.exception))
 
 
 if __name__ == "__main__":
