@@ -1,0 +1,3 @@
+gateway = "public"
+hostname = "paseo.example.com"
+backend = "paseo-web/main"

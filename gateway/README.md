@@ -28,6 +28,8 @@ just gateway verify paseo1         # HTTPS, password enforcement and WebSocket
 ```
 
 Omitting the Route name selects all declared Routes, applied sequentially.
+Environment Routes are applied before the shared Paseo UI, whose public check
+also verifies connections to those environments.
 `setup` configures the shared gateway once and previews the Routes without
 publishing them. Without a management credential, `plan` and `status` show the
 desired declarations but explicitly report remote state as unknown. `apply`
@@ -126,6 +128,12 @@ derives its allowed hostnames from the Route catalog and exports its own port,
 so these values are not copied into multiple configuration files. Add a second
 instance and its login before publishing another Route. Browserlab migration
 remains a separate discussion.
+
+The shared browser entry is declared separately as
+`paseo.example.com → paseo-web/main`. Its static frontend holds no agent data;
+clients add environment hosts such as `paseo1.example.com:443` with SSL and the
+environment password. Backend deployments derive the shared frontend's allowed
+HTTPS origins from these Routes. See [shared UI operations](../services/paseo-web/README.md).
 
 Offline controller checks run with `python3 checks/gateway`. They exercise
 preservation, conflict detection, deployment-time drift, retry after partial

@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Manage the shared static Paseo UI, with no agent state or credentials."""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+SERVICE = Path(__file__).resolve().parent
+ROOT = SERVICE.parents[1]
+sys.path.insert(0, str(ROOT))
+from gateway.model import hostnames_for, read_toml
+
+ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
+NAME = "infra-paseo-web-main"
+NETWORK = NAME + "-net"
+LABELS = {"infra.managed": "true", "infra.service": "paseo-web", "infra.instance": "main", "infra.owner": str(os.getuid())}
+STATE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "infra/paseo-web"
+
+
+def engine(*args, check=True):
+    return subprocess.run(ENGINE + list(args), capture_output=True, text=True, check=check)
+
+
+def inspect(kind, name):
+    result = engine(kind, "inspect", name, check=False)
+    if result.returncode:
+        if engine(kind, "exists", name, check=False).returncode == 1:
+            return None
+        raise RuntimeError(f"Cannot inspect {kind} {name}; check the rootless engine")
+    return json.loads(result.stdout)[0]
+
+
+def owned(data):
+    labels = data.get("Labels") or data.get("labels") or data.get("Config", {}).get("Labels") or {}
+    if not all(labels.get(key) == value for key, value in LABELS.items()):
+        raise RuntimeError("Refusing to modify a resource not owned by infra/paseo-web/main")
+
+
+def label_args():
+    return [arg for pair in LABELS.items() for arg in ("--label", "=".join(pair))]
+
+
+def config():
+    result = read_toml(SERVICE / "config.toml")
+    if set(result) != {"port", "base_image", "image_ref"}:
+        raise ValueError("paseo-web requires port, base_image and image_ref")
+    if type(result["port"]) is not int or not 1024 <= result["port"] <= 65535:
+        raise ValueError("paseo-web port must be between 1024 and 65535")
+    if not re.fullmatch(r"docker.io/nginxinc/nginx-unprivileged@sha256:[a-f0-9]{64}", result["base_image"]):
+        raise ValueError("Pin the unprivileged NGINX base image by digest")
+    return result
+
+
+def health(c, timeout=30):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{c['port']}/healthz", timeout=2) as response:
+                if response.status == 200:
+                    return
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            pass
+        time.sleep(1)
+    raise RuntimeError("paseo-web health check failed; inspect 'just logs paseo-web'")
+
+
+def build(c):
+    subprocess.run([sys.executable, str(ROOT / "services/paseo/prepare-artifacts")], check=True)
+    paseo = read_toml(ROOT / "services/paseo/versions.toml")
+    cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "infra/paseo"
+    artifacts = cache / f"{paseo['paseo_version']}-{paseo['codex_version']}-{paseo['node_version']}-bundle{paseo['artifact_layout']}"
+    assets = artifacts / "paseo/node_modules/@getpaseo/server/dist/server/web-ui"
+    if not (assets / "index.html").is_file():
+        raise RuntimeError("The pinned Paseo distribution has no bundled web UI")
+    if not inspect("image", c["base_image"]):
+        engine("pull", c["base_image"])
+    with tempfile.TemporaryDirectory(prefix="web-build-", dir=cache) as directory:
+        context = Path(directory)
+        for filename in ("Containerfile", "nginx.conf"):
+            shutil.copy2(SERVICE / filename, context / filename)
+        shutil.copytree(assets, context / "web-ui", copy_function=os.link)
+        engine("build", "--pull=never", "--build-arg", "BASE_IMAGE=" + c["base_image"],
+               "-t", c["image_ref"], *label_args(), str(context))
+    print("Built shared UI from the verified Paseo", paseo["paseo_version"], "assets")
+
+
+def deploy(c):
+    image = inspect("image", c["image_ref"])
+    if not image:
+        raise RuntimeError("Shared UI image missing; run 'just build paseo-web'")
+    spec = hashlib.sha256(json.dumps({"config": c, "image": image["Id"],
+                                     "implementation": Path(__file__).read_text()}, sort_keys=True).encode()).hexdigest()
+    current = inspect("container", NAME)
+    if current:
+        owned(current)
+        if current["Config"]["Labels"].get("infra.spec") == spec:
+            if not current["State"]["Running"]:
+                engine("start", NAME)
+            health(c)
+            print("paseo-web: unchanged, healthy")
+            return
+    else:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", c["port"]))
+    network = inspect("network", NETWORK)
+    if network:
+        owned(network)
+        if network.get("driver") != "bridge" or not network.get("internal") or network.get("options", {}).get("isolate") != "strict":
+            raise RuntimeError("Existing frontend network does not match the isolation policy")
+    else:
+        engine("network", "create", "--internal", "--opt", "isolate=strict", *label_args(), NETWORK)
+    old = None
+    old_running = False
+    backup_ready = False
+    replacement_started = False
+    try:
+        if current:
+            old = NAME + "-previous-" + str(time.time_ns())
+            old_running = current["State"]["Running"]
+            engine("stop", NAME)
+            engine("rename", NAME, old)
+            backup_ready = True
+        replacement_started = True
+        engine("run", "-d", "--pull=never", "--name", NAME, *label_args(), "--label", "infra.spec=" + spec,
+               "--restart=always", "--user=101:101", "--init", "--read-only", "--cap-drop=all",
+               "--security-opt=no-new-privileges", "--network", NETWORK, "--no-hosts", "--http-proxy=false",
+               "--cpus=0.5", "--memory=128m", "--memory-swap=128m", "--pids-limit=128",
+               "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777",
+               "-p", f"127.0.0.1:{c['port']}:8080", c["image_ref"])
+        health(c)
+    except Exception:
+        failed = inspect("container", NAME)
+        if replacement_started and failed:
+            owned(failed)
+            engine("rm", "-f", NAME)
+        if backup_ready:
+            engine("rename", old, NAME)
+            if old_running:
+                engine("start", NAME)
+        elif current and old_running:
+            engine("start", NAME)
+        raise
+    if old:
+        engine("rm", old)
+    print(f"paseo-web: healthy at http://127.0.0.1:{c['port']}")
+
+
+def verify(c):
+    data = inspect("container", NAME)
+    if not data:
+        raise RuntimeError("Shared UI container is missing")
+    owned(data)
+    health(c)
+    if not data["HostConfig"]["ReadonlyRootfs"] or data["Config"]["User"] != "101:101":
+        raise RuntimeError("Shared UI runtime must be read-only and non-root")
+    if any(mount["Type"] in ("bind", "volume") for mount in data.get("Mounts", [])):
+        raise RuntimeError("Shared UI must not mount credentials or agent data")
+    result = engine("exec", NAME, "sh", "-c", "test ! -e /usr/local/bin/codex && test ! -e /workspace && grep -q 'CapEff:[[:space:]]*0000000000000000' /proc/1/status && grep -q 'NoNewPrivs:[[:space:]]*1' /proc/1/status", check=False)
+    if result.returncode:
+        raise RuntimeError("Shared UI runtime capabilities or filesystem checks failed")
+    print("PASS shared UI: non-root, read-only, no credentials/data mounts, no agent runtime")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=["build", "deploy", "endpoint", "status", "logs", "stop", "restart", "verify", "verify-public"])
+    parser.add_argument("instance", nargs="?", default="main")
+    parser.add_argument("--hostname")
+    args = parser.parse_args()
+    if args.instance != "main":
+        raise ValueError("The shared UI uses the single instance 'main'")
+    c = config()
+    if args.command == "endpoint":
+        print(json.dumps({"url": f"http://127.0.0.1:{c['port']}", "health_path": "/healthz"}))
+        return
+    if args.command == "verify-public":
+        if not args.hostname or args.hostname not in hostnames_for("paseo-web/main"):
+            raise ValueError("Select a declared shared UI hostname")
+        subprocess.run([sys.executable, str(ROOT / "checks/paseo-web-public"), args.hostname], check=True)
+        return
+    os.umask(0o077)
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (STATE / "manage.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if args.command == "build":
+            build(c)
+        elif args.command == "deploy":
+            deploy(c)
+        elif args.command == "verify":
+            verify(c)
+        elif args.command == "status":
+            data = inspect("container", NAME)
+            if data:
+                owned(data)
+            print("paseo-web:", "running" if data and data["State"]["Running"] else "stopped or absent")
+        elif args.command == "logs":
+            result = engine("logs", "--tail=60", NAME)
+            sys.stdout.write(result.stdout)
+            sys.stderr.write(result.stderr)
+        else:
+            data = inspect("container", NAME)
+            if not data:
+                raise RuntimeError("Shared UI container is missing")
+            owned(data)
+            engine(args.command, NAME)
+            if args.command == "restart":
+                health(c)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        print("error: " + str(error), file=sys.stderr)
+        sys.exit(1)

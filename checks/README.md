@@ -4,10 +4,12 @@
 just verify paseo
 just smoke paseo demo
 just verify cloudflare-tunnel
+just verify paseo-web
 python3 checks/gateway
 just gateway plan paseo1
 # After publishing the Route:
 just gateway verify paseo1
+just gateway verify paseo-web
 ```
 
 `verify paseo` restarts the disposable `demo`, creates temporary persistence
@@ -96,6 +98,31 @@ actionable Zone errors, IPv4/IPv6 IP denial classification, credential redaction
 - HTTP probes showed 403 with Python's default User-Agent and 200 with an explicit
   verifier User-Agent. The public check now identifies itself as
   `infra-gateway-verifier/1.0` and passes all status and WebSocket checks.
+
+## Shared web entry verified on 2026-10-09
+
+- `paseo.example.com → paseo-web/main → http://127.0.0.1:16780` is published and
+  recorded as `verified`. The image uses the verified Paseo 0.9.1 browser assets
+  and a digest-pinned unprivileged NGINX base. The existing environment remains
+  `paseo1.example.com → paseo/demo`.
+- Removing the shared UI ingress entry reproduced the complete previous Tunnel
+  configuration. Its DNS record is the intended proxied Tunnel CNAME; both
+  Route backends are healthy. Demo's ChatGPT login remained available.
+- The shared UI runs as UID/GID 101 with a read-only image, zero effective
+  capabilities, no-new-privileges, resource limits and an internal bridge. It
+  has no credential or persistent data mounts, workspace or Codex executable.
+  An unchanged deployment retained its container ID.
+- Public HTTPS, the JavaScript asset and SPA history fallback passed. The shared
+  website serves no daemon endpoints and has no initial-daemon connection hint.
+- Demo accepts the exact shared website Origin. Public CORS preflight passed;
+  absent/wrong/correct passwords returned 401/401/200. The pinned Paseo client
+  read agents over an authenticated WebSocket using the browser Origin and
+  password subprotocol. An unlisted Origin was rejected with HTTP 403.
+- All 27 offline checks passed, including declared origin derivation,
+  environment-before-frontend apply order and transport retry behavior.
+  Intermittent TLS interruptions occurred from this runner; the read-only
+  shared UI HTTP probes retry transport failures up to three times, without
+  retrying HTTP authentication failures or disabling certificate validation.
 
 Two-instance runtime isolation has not been exercised yet. No visual browser
 inspection or machine reboot was performed. Existing public hostnames returned

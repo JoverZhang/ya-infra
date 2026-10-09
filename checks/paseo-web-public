@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Verify the shared UI and browser-origin access to its declared Paseo hosts."""
+import argparse
+import importlib.machinery
+import importlib.util
+import os
+from pathlib import Path
+import re
+import secrets
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from gateway.model import read_toml, routes
+
+loader = importlib.machinery.SourceFileLoader("paseo_manage", str(ROOT / "services/paseo/manage"))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+paseo = importlib.util.module_from_spec(spec)
+loader.exec_module(paseo)
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def request(hostname, path, *, origin=None, password=None, method="GET"):
+    if method not in ("GET", "HEAD", "OPTIONS"):
+        raise ValueError("Public checks only send read-only requests")
+    headers = {"User-Agent": "infra-gateway-verifier/1.0"}
+    if origin:
+        headers["Origin"] = origin
+    if password:
+        headers["Authorization"] = "Bearer " + password
+    if method == "OPTIONS":
+        headers.update({"Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "Authorization"})
+    req = urllib.request.Request("https://" + hostname + path, method=method, headers=headers)
+    opener = urllib.request.build_opener(NoRedirect)
+    for attempt in range(3):
+        try:
+            try:
+                response = opener.open(req, timeout=15)
+            except urllib.error.HTTPError as error:
+                response = error
+            with response:
+                return response.code, response.headers, response.read(256 * 1024)
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == 2:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+
+
+def websocket_check(hostname, origin, password):
+    v = read_toml(ROOT / "services/paseo/versions.toml")
+    cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "infra/paseo"
+    bundle = cache / f"{v['paseo_version']}-{v['codex_version']}-{v['node_version']}-bundle{v['artifact_layout']}"
+    package = bundle / "paseo/node_modules"
+    source = r"""
+const { DaemonClient } = await import(process.env.INFRA_PASEO_CLIENT);
+const { default: WebSocket } = await import(process.env.INFRA_PASEO_WS);
+const logger = {debug(){}, info(){}, warn(){}, error(){}, trace(){}, fatal(){}, child(){return this}};
+const deadline = setTimeout(() => process.exit(1), 25000);
+async function read(origin) {
+  let upgradeStatus = 0;
+  const client = new DaemonClient({
+    url: `wss://${process.env.INFRA_PASEO_HOST}/ws`,
+    clientId: 'infra-paseo-web-check', clientType: 'browser',
+    password: process.env.PASEO_PASSWORD, logger,
+    connectTimeoutMs: 10000, reconnect: {enabled: false},
+    webSocketFactory: (url, options) => {
+      // Browser authentication uses the subprotocol, without a bearer header.
+      const socket = new WebSocket(url, options?.protocols, {
+        origin, headers: {'User-Agent': 'infra-gateway-verifier/1.0'}
+      });
+      socket.on('error', error => {
+        const match = /^Unexpected server response: (\d+)$/.exec(error.message);
+        if (match) upgradeStatus = Number(match[1]);
+      });
+      return socket;
+    }
+  });
+  try {
+    await client.connect();
+    await client.fetchAgents();
+    return {success: true, upgradeStatus};
+  } catch {
+    return {success: false, upgradeStatus};
+  } finally {
+    await client.close();
+  }
+}
+const allowed = await read(process.env.INFRA_PASEO_ORIGIN);
+if (!allowed.success) {
+  console.log(`Allowed browser Origin failed (upgrade status ${allowed.upgradeStatus})`);
+  process.exitCode = 1;
+} else {
+  const denied = await read('https://untrusted.invalid');
+  if (denied.success || denied.upgradeStatus !== 403) {
+    console.log(`Unlisted browser Origin was not rejected with HTTP 403 (status ${denied.upgradeStatus})`);
+    process.exitCode = 1;
+  }
+}
+clearTimeout(deadline);
+"""
+    env = {**os.environ, "PASEO_PASSWORD": password, "INFRA_PASEO_HOST": hostname,
+           "INFRA_PASEO_ORIGIN": origin,
+           "INFRA_PASEO_CLIENT": (package / "@getpaseo/client/dist/daemon-client.js").as_uri(),
+           "INFRA_PASEO_WS": (package / "ws/wrapper.mjs").as_uri()}
+    result = subprocess.run([str(bundle / "node"), "--input-type=module", "-"], input=source,
+                            env=env, capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        # Library errors may include headers; never print unfiltered subprocess output.
+        raise RuntimeError(f"{hostname}: browser-origin authenticated WebSocket/read or origin rejection failed")
+
+
+def main(hostname):
+    if hostname not in [r.hostname for r in routes() if r.backend == "paseo-web/main"]:
+        raise ValueError("Shared UI hostname is not declared")
+    status, headers, body = request(hostname, "/")
+    if status != 200 or b"paseo" not in body.lower():
+        raise RuntimeError("Shared UI page is not available")
+    if b"__PASEO_INITIAL_DAEMON_CONNECTION__" in body:
+        raise RuntimeError("Shared UI must not auto-connect to its own static server")
+    assets = re.findall(rb'(?:src|href)="(/_expo/[^"<>]+\.js)"', body)
+    if not assets or request(hostname, assets[0].decode(), method="HEAD")[0] != 200:
+        raise RuntimeError("Shared UI JavaScript asset is not available")
+    if request(hostname, "/settings/connections")[0] != 200:
+        raise RuntimeError("Shared UI history route fallback failed")
+    for path in ("/api/status", "/ws", "/mcp/agents"):
+        if request(hostname, path)[0] != 404:
+            raise RuntimeError("Shared UI must not expose daemon endpoints")
+    origin = "https://" + hostname
+    checked = 0
+    for route in routes():
+        if not route.backend.startswith("paseo/"):
+            continue
+        instance = route.backend.split("/")[1]
+        password = paseo.password_file(instance).read_text().strip()
+        status, headers, _ = request(route.hostname, "/api/status", origin=origin, method="OPTIONS")
+        if status != 204 or headers.get("Access-Control-Allow-Origin") != origin:
+            raise RuntimeError(f"{route.name}: shared UI CORS preflight failed")
+        for credential, expected in ((None, 401), (secrets.token_urlsafe(32), 401), (password, 200)):
+            status, headers, _ = request(route.hostname, "/api/status", origin=origin, password=credential)
+            if status != expected or headers.get("Access-Control-Allow-Origin") != origin:
+                raise RuntimeError(f"{route.name}: cross-origin password enforcement failed")
+        websocket_check(route.hostname, origin, password)
+        checked += 1
+        print(f"PASS {route.name}: shared UI Origin, password enforcement, authenticated WebSocket/read, unlisted Origin denied")
+    if not checked:
+        raise RuntimeError("No Paseo environments declared for shared UI verification")
+    print("PASS shared UI: HTTPS, static assets, history routes, no daemon endpoints")
+
+
+if __name__ == "__main__":
+    try:
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("hostname")
+        main(parser.parse_args().hostname)
+    except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+        print("FAIL " + str(error), file=sys.stderr)
+        sys.exit(1)

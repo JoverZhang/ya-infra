@@ -20,7 +20,7 @@ import urllib.request
 
 SERVICE = Path(__file__).resolve().parent
 sys.path.insert(0, str(SERVICE.parents[1]))
-from gateway.model import hostnames_for
+from gateway.model import hostnames_for, origins_for_service
 
 ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "infra/paseo"
@@ -84,6 +84,8 @@ def config(instance):
                 raise ValueError(f"Port {c['port']} also belongs to {other.stem}")
     c["image_ref"] = c.get("image_ref", versions()["image_ref"])
     c["hostnames"] = hostnames_for("paseo/" + instance)
+    c["cors_origins"] = sorted({"https://" + host for host in c["hostnames"]}
+                               | set(origins_for_service("paseo-web")))
     return c
 
 
@@ -182,7 +184,8 @@ def deploy(instance):
                 raise RuntimeError(f"Port {c['port']} is already occupied") from e
     network, mounts = resource_setup(instance, c)
     envfile = CONFIG / instance / "runtime.env"
-    envfile.write_text(f"PASEO_PASSWORD={secret}\nPASEO_HOSTNAMES={','.join(c['hostnames'])}\n")
+    envfile.write_text(f"PASEO_PASSWORD={secret}\nPASEO_HOSTNAMES={','.join(c['hostnames'])}\n"
+                       f"PASEO_CORS_ORIGINS={','.join(c['cors_origins'])}\n")
     envfile.chmod(0o600)
     old = None
     old_running = False

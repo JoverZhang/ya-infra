@@ -55,6 +55,8 @@ def main():
         check_credentials(client, selected)
         return
     if args.command in ("apply", "verify"):
+        # The shared UI's public check exercises its declared environments.
+        selected.sort(key=lambda route: route.backend.startswith("paseo-web/"))
         STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
         STATE.chmod(0o700)
         with (STATE / "manage.lock").open("a") as lock:
@@ -65,7 +67,7 @@ def main():
                     controller.apply(route)
                 else:
                     controller.verify(route)
-                print(f"{route.name}: verified HTTPS, password enforcement and WebSocket")
+                print(f"{route.name}: public checks passed")
         return
     for route in selected:
         endpoint = model.endpoint(route)

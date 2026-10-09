@@ -151,9 +151,16 @@ the Tunnel route and DNS. Each instance retains its own password. The initial
 declaration is `paseo1.example.com → paseo/demo`; publishing it requires the
 gateway's management credential.
 
-The initial Route was published and verified on 2026-10-09. Open
-[paseo1.example.com](https://paseo1.example.com) and use the `demo` connection password
-stored in `~/.config/infra/paseo/demo/password`.
+Open the shared [paseo.example.com](https://paseo.example.com) website and add Host
+`paseo1.example.com`, Port `443`, **Use SSL** enabled, with the `demo` password from
+`~/.config/infra/paseo/demo/password`. The shared UI has its own
+[deployment module](../paseo-web/README.md). Connection settings are saved in each
+browser; sessions and files belong to the backend environment. Existing
+daemon-served pages can still connect to their own environment.
+
+Each deployment derives `PASEO_CORS_ORIGINS` from the declared shared UI Routes
+and its own HTTPS hostnames. Redeploy an environment after changing those Routes
+to apply its new origin list. Password admission and host checks still apply.
 
 This backend exports `endpoint <instance>` as JSON containing `url` and
 `health_path`, and `verify-public <instance> --hostname <declared-hostname>` for

@@ -12,7 +12,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -173,6 +173,12 @@ class ControllerChecks(unittest.TestCase):
 
 
 class DeclarationChecks(unittest.TestCase):
+    def test_service_origins_only_include_its_declared_https_routes(self):
+        self.write_route("web", "paseo.example.org", "paseo-web/main")
+        self.write_route("paseo1", "paseo1.example.org", "paseo/demo")
+        self.assertEqual(model.origins_for_service("paseo-web", self.root), ["https://paseo.example.org"])
+        self.assertEqual(model.origins_for_service("absent", self.root), [])
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -216,7 +222,55 @@ class DeclarationChecks(unittest.TestCase):
             self.assertEqual(api_token(), "test-only-credential-value")
 
 
+class SharedWebTransportChecks(unittest.TestCase):
+    def verifier(self):
+        loader = importlib.machinery.SourceFileLoader("paseo_web_public_checks", str(ROOT / "checks/paseo-web-public"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+
+    def test_transient_https_failure_does_not_prevent_public_verification(self):
+        verifier = self.verifier()
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.code = 200
+        response.headers = {}
+        response.read.return_value = b"paseo"
+        opener = Mock()
+        opener.open.side_effect = [urllib.error.URLError("TLS handshake interrupted"), response]
+        with patch.object(verifier.urllib.request, "build_opener", return_value=opener), patch("time.sleep"):
+            self.assertEqual(verifier.request("paseo.example.org", "/")[0], 200)
+
+    def test_wrong_password_response_is_not_retried_as_a_transport_error(self):
+        verifier = self.verifier()
+        failure = urllib.error.HTTPError("https://paseo1.example.org/api/status", 401,
+                                         "Unauthorized", {}, io.BytesIO(b"unauthorized"))
+        opener = Mock()
+        opener.open.side_effect = failure
+        with patch.object(verifier.urllib.request, "build_opener", return_value=opener):
+            self.assertEqual(verifier.request("paseo1.example.org", "/api/status", password="wrong")[0], 401)
+        opener.open.assert_called_once()
+
+
 class CredentialDiagnosticsChecks(unittest.TestCase):
+    def test_apply_publishes_environments_before_shared_ui(self):
+        loader = importlib.machinery.SourceFileLoader("gateway_manage_order_checks", str(ROOT / "gateway/manage"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        manage = importlib.util.module_from_spec(spec)
+        loader.exec_module(manage)
+        web = model.Route("paseo-web", "public", "paseo.example.org", "paseo-web/main")
+        controller = Mock()
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(manage, "STATE", Path(directory)), \
+                patch.object(manage, "Client", return_value=Mock()), \
+                patch.object(manage, "Controller", return_value=controller), \
+                patch.object(manage.model, "select", return_value=[web, ROUTE]), \
+                patch.object(manage.model, "endpoint", return_value=ENDPOINT), \
+                patch.object(sys, "argv", ["gateway/manage", "apply"]), redirect_stdout(io.StringIO()):
+            manage.main()
+        self.assertEqual([call.args[0] for call in controller.apply.call_args_list], [ROUTE, web])
+
     def test_provider_ip_restriction_is_not_reported_as_missing_zone_permission(self):
         for address, cidr in [("192.0.2.10", "192.0.2.10/32"), ("2001:db8::10", "2001:db8::10/128")]:
             with self.subTest(address=address):

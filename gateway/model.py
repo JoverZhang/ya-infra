@@ -82,6 +82,11 @@ def hostnames_for(backend, root=ROOT):
     return sorted(r.hostname for r in routes(root) if r.backend == backend)
 
 
+def origins_for_service(service, root=ROOT):
+    return sorted({"https://" + r.hostname for r in routes(root)
+                   if r.backend.split("/")[0] == service})
+
+
 def backend_command(route, command, *args, root=ROOT):
     service, instance = route.backend.split("/")
     module = root / "services" / service / "manage"

@@ -25,6 +25,7 @@ discussed separately.
 | Definition | Location |
 | --- | --- |
 | Paseo build and instance configuration | `services/paseo/` |
+| Shared Paseo browser UI | `services/paseo-web/` |
 | Cloudflare Tunnel connector configuration | `services/cloudflare-tunnel/` |
 | Shared public gateway and hostname routes | `gateway/public.toml`, `gateway/routes/` |
 | Instance passwords | `~/.config/infra/paseo/<instance>/password` |
@@ -44,15 +45,19 @@ port. The shared Cloudflare Tunnel carries traffic for all routes. This is a
 local control module with Gateway/Route concepts; it adds no proxy or Kubernetes
 runtime. Backend instances keep their own files, sessions, login and password.
 
-The first Route was published and verified on 2026-10-09. Open
-[paseo1.example.com](https://paseo1.example.com) and connect with the `demo` password
-from `~/.config/infra/paseo/demo/password`.
+The shared browser entry is [paseo.example.com](https://paseo.example.com). Add
+`paseo1.example.com` as a Direct connection with port `443`, SSL enabled and the
+`demo` password from `~/.config/infra/paseo/demo/password`. The shared UI keeps
+each browser's connection catalog; the selected environment holds sessions and
+files. See [shared UI operations](services/paseo-web/README.md).
 
 For a fresh installation, set up the management credential once, then publish:
 
 ```bash
 just gateway setup
 just gateway apply paseo1
+just build paseo-web
+just gateway apply paseo-web
 ```
 
 The recovered connector token already runs the tunnel. Publishing routes also
