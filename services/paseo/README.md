@@ -151,6 +151,10 @@ the Tunnel route and DNS. Each instance retains its own password. The initial
 declaration is `paseo1.example.com → paseo/demo`; publishing it requires the
 gateway's management credential.
 
+The initial Route was published and verified on 2026-10-09. Open
+[paseo1.example.com](https://paseo1.example.com) and use the `demo` connection password
+stored in `~/.config/infra/paseo/demo/password`.
+
 This backend exports `endpoint <instance>` as JSON containing `url` and
 `health_path`, and `verify-public <instance> --hostname <declared-hostname>` for
 HTTPS and WebSocket checks. With one Route, `just verify-public paseo demo` is a

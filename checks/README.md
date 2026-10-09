@@ -56,8 +56,8 @@ than trusting the agent's completion status. Its temporary file is removed.
   installed. The interactive credential wizard was inspected statically.
 - Initial checks had no management API credential, so no live gateway API write
   was exercised. Public verification was attempted and failed during TLS
-  with `UNEXPECTED_EOF_WHILE_READING`; the Route is not marked verified. Run the
-  credential wizard, apply the Route and repeat its public checks before sharing.
+  with `UNEXPECTED_EOF_WHILE_READING` before publication. Subsequent credential
+  repair and successful publication are recorded below.
 
 ## Credential diagnosis on 2026-10-09
 
@@ -69,8 +69,9 @@ Include value of `0.0.0.0`. After the owner reported token edits, the failures
 persisted. Inspecting the provider message in memory established the cause:
 Cloudflare explicitly rejected this server's outgoing IPv4 address under the
 token's Client IP Address Filtering condition. The message and token secret were
-not logged. Further read checks still report this IP block; the effective token
-condition needs correcting before permissions can be verified.
+not logged. After the owner corrected the dashboard settings, Zone, Tunnel and
+DNS reads passed. A transient token-verification transport failure passed on
+retry; the saved token verified as active.
 
 The revised credential check reports independent results, permissions and
 resource scopes, keeps secrets/provider messages out of errors, and labels
@@ -79,7 +80,22 @@ unexercised write permissions explicitly. Confirmed IP denials now report
 permission. Twenty-three offline checks pass, including hidden Tunnel failures,
 actionable Zone errors, IPv4/IPv6 IP denial classification, credential redaction
 (including IPv6 scope IDs), account token verification and read-only diagnostics.
-Token condition correction and public publication are still pending.
+
+## Public publication verified on 2026-10-09
+
+- Live Tunnel configuration and DNS writes succeeded for
+  `paseo1.example.com → paseo/demo → http://127.0.0.1:16770`, exercising both required
+  Edit permissions. DNS is a proxied CNAME to the configured Tunnel.
+- Removing the new ingress entry from the returned configuration reproduced the
+  complete pre-publication configuration, including existing origin settings and
+  the catch-all. The Tunnel connector remained ready.
+- HTTPS web UI returned 200. API requests without a password and with a wrong
+  password returned 401; the instance password returned 200. The real Paseo CLI
+  connected over the public authenticated WebSocket. The Route is recorded as
+  `verified`.
+- HTTP probes showed 403 with Python's default User-Agent and 200 with an explicit
+  verifier User-Agent. The public check now identifies itself as
+  `infra-gateway-verifier/1.0` and passes all status and WebSocket checks.
 
 Two-instance runtime isolation has not been exercised yet. No visual browser
 inspection or machine reboot was performed. Existing public hostnames returned

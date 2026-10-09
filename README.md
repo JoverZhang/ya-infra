@@ -44,7 +44,11 @@ port. The shared Cloudflare Tunnel carries traffic for all routes. This is a
 local control module with Gateway/Route concepts; it adds no proxy or Kubernetes
 runtime. Backend instances keep their own files, sessions, login and password.
 
-Run the management-credential setup once, then publish the initial Route:
+The first Route was published and verified on 2026-10-09. Open
+[paseo1.example.com](https://paseo1.example.com) and connect with the `demo` password
+from `~/.config/infra/paseo/demo/password`.
+
+For a fresh installation, set up the management credential once, then publish:
 
 ```bash
 just gateway setup
