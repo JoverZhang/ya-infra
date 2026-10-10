@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""Exercise the public Just interface with isolated service and credential fixtures."""
+import json
+import os
+from pathlib import Path
+import pty
+import shutil
+import subprocess
+import tempfile
+import unittest
+from urllib.parse import parse_qs, urlsplit
+
+ROOT = Path(__file__).resolve().parents[1]
+PASSWORDS = {"family-a": "fixture-family-a-password-0123456789",
+             "family-b": "fixture-family-b-password-0123456789"}
+
+
+class CommandChecks(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="infra-cli-check-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        for name in ("justfile", "bin/svc", "services/paseo/manage", "services/paseo/pair", "gateway/model.py"):
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, target)
+        self.config = self.root / "private"
+        self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.config)}
+        (self.root / "gateway/public.toml").write_text(
+            'provider="cloudflare-tunnel"\nzone="example.test"\naccount_id="' + "a" * 32 + '"\n'
+            'tunnel_id="11111111-1111-4111-8111-111111111111"\n')
+        (self.root / "gateway/routes").mkdir()
+        (self.root / "services/paseo/instances").mkdir()
+        for instance, password in PASSWORDS.items():
+            (self.root / "services/paseo/instances" / (instance + ".toml")).write_text("port=16770\n")
+            self.route(instance, instance + ".example.test", instance)
+            secret = self.config / "infra/paseo" / instance / "password"
+            secret.parent.mkdir(parents=True)
+            secret.write_text(password + "\n")
+            secret.chmod(0o600)
+        echoer = self.root / "services/echoer/manage"
+        echoer.parent.mkdir(parents=True)
+        echoer.write_text('"""Record arguments without interpreting them."""\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        (self.root / "gateway/manage").write_text('import json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        engine = self.root / "fixtures/podman"
+        engine.parent.mkdir()
+        engine.write_text('#!/usr/bin/env python3\nimport json, os, sys\n'
+                          'if os.environ.get("INFRA_TEST_ENGINE_FAILED"):\n'
+                          '    print("private-provider-error", file=sys.stderr); sys.exit(1)\n'
+                          'print(json.dumps([{ "Labels": {"infra.instance": "family-a"}, "State": "running"},'
+                          '{"Labels": {"infra.instance": "family-b"}, "State": "exited"}]))\n')
+        engine.chmod(0o755)
+        self.env["PATH"] = str(engine.parent) + os.pathsep + os.environ["PATH"]
+
+    def route(self, name, hostname, instance):
+        (self.root / "gateway/routes" / (name + ".toml")).write_text(
+            f'gateway="public"\nhostname="{hostname}"\nbackend="paseo/{instance}"\n')
+
+    def run_cli(self, *args, answers=None):
+        command = ["just", "-f", str(self.root / "justfile"), *args]
+        if answers is None:
+            return subprocess.run(command, cwd=self.root, env=self.env, stdin=subprocess.DEVNULL,
+                                  capture_output=True, text=True, timeout=10)
+        master, slave = pty.openpty()
+        try:
+            process = subprocess.Popen(command, cwd=self.root, env=self.env, stdin=slave,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            os.close(slave)
+            slave = None
+            os.write(master, answers.encode())
+            try:
+                stdout, stderr = process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+                raise
+            return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        finally:
+            os.close(master)
+            if slave is not None:
+                os.close(slave)
+
+    def assert_link(self, result, instance, hostname=None):
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        link = urlsplit(result.stdout.strip())
+        self.assertEqual((link.scheme, link.hostname, link.port),
+                         ("tcp", hostname or instance + ".example.test", 443))
+        self.assertEqual(parse_qs(link.query), {"ssl": ["true"], "password": [PASSWORDS[instance]]})
+        self.assertNotIn(PASSWORDS[instance], result.stderr)
+
+    def test_only_two_public_entries_and_service_discovery(self):
+        result = self.run_cli("--summary")
+        self.assertEqual(set(result.stdout.split()), {"svc", "gateway"})
+        for args in ((), ("svc",)):
+            result = self.run_cli(*args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("echoer", result.stdout)
+            self.assertIn("paseo", result.stdout)
+
+    def test_arguments_are_preserved_without_shell_execution(self):
+        marker = self.root / "unexpected-shell-command"
+        values = ["two words", f"$(touch {marker})", f"`touch {marker}`", "a'b", ""]
+        result = self.run_cli("svc", "echoer", "capture", *values)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ["capture", *values])
+        self.assertFalse(marker.exists())
+        result = self.run_cli("gateway", "plan", "route-one")
+        self.assertEqual(json.loads(result.stdout), ["plan", "route-one"])
+        self.assertEqual(json.loads(self.run_cli("gateway").stdout), ["--help"])
+
+    def test_service_help_includes_pairing_environments(self):
+        result = self.run_cli("svc", "paseo")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("just svc paseo", result.stdout)
+        self.assertIn("family-b", result.stdout)
+        for password in PASSWORDS.values():
+            self.assertNotIn(password, result.stdout + result.stderr)
+
+    def test_explicit_environment_emits_only_its_link(self):
+        result = self.run_cli("svc", "paseo", "pair", "family-b")
+        self.assert_link(result, "family-b")
+        self.assertEqual(result.stderr, "")
+
+    def test_list_shows_state_and_unavailable_reasons_without_credentials(self):
+        instances = self.root / "services/paseo/instances"
+        (instances / "no-route.toml").write_text("port=16771\n")
+        (instances / "no-password.toml").write_text("port=16772\n")
+        self.route("no-password", "missing.example.test", "no-password")
+        result = self.run_cli("svc", "paseo", "pair", "--list")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for message in ("运行中", "已停止", "缺少公网 Route", "缺少密码文件"):
+            self.assertIn(message, result.stdout)
+        for password in PASSWORDS.values():
+            self.assertNotIn(password, result.stdout + result.stderr)
+
+    def test_noninteractive_missing_environment_does_not_choose_one(self):
+        result = self.run_cli("svc", "paseo", "pair")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("非交互运行请指定环境", result.stderr)
+
+    def test_multiple_targets_require_choice_and_allow_name(self):
+        result = self.run_cli("svc", "paseo", "pair", answers="\ninvalid\nfamily-b\n")
+        self.assert_link(result, "family-b")
+        self.assertIn("请输入菜单中的编号或环境名", result.stderr)
+
+    def test_single_target_has_enter_default_and_cancel_has_no_link(self):
+        (self.root / "services/paseo/instances/family-b.toml").unlink()
+        result = self.run_cli("svc", "paseo", "pair", answers="\n")
+        self.assert_link(result, "family-a")
+        self.assertIn("Enter 选择唯一环境", result.stderr)
+        result = self.run_cli("svc", "paseo", "pair", answers="q\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_multiple_hostnames_require_selection_or_explicit_hostname(self):
+        self.route("alias", "alias.example.test", "family-a")
+        result = self.run_cli("svc", "paseo", "pair", "family-a", answers="family-a\n2\n")
+        self.assert_link(result, "family-a", "family-a.example.test")
+        self.assertIn("多个域名", result.stderr)
+        result = self.run_cli("svc", "paseo", "pair", "family-a", "--hostname", "alias.example.test")
+        self.assert_link(result, "family-a", "alias.example.test")
+
+    def test_runtime_lookup_failure_does_not_block_or_leak(self):
+        self.env["INFRA_TEST_ENGINE_FAILED"] = "1"
+        result = self.run_cli("svc", "paseo", "pair", "--list")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("状态未知", result.stdout)
+        self.assertNotIn("private-provider-error", result.stdout + result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

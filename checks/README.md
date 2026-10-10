@@ -1,13 +1,14 @@
 # Deployment verification
 
 ```bash
-just verify paseo
-just smoke paseo demo
-just verify cloudflare-tunnel
-just verify paseo-web
+just svc paseo verify
+just svc paseo smoke demo
+just svc cloudflare-tunnel verify
+just svc paseo-web verify
 # Prints a credential-bearing link; paste it in the shared website:
-just pair paseo demo
+just svc paseo pair demo
 python3 checks/gateway
+python3 checks/cli
 just gateway plan paseo1
 # After publishing the Route:
 just gateway verify paseo1
@@ -133,8 +134,8 @@ origins was not established by the migration checks.
 
 ## Direct pairing import verified on 2026-10-09
 
-- `just -f ~/infra/justfile pair paseo demo` was exercised from outside the
-  repository. It emitted exactly one line containing the declared public host,
+- The pairing link command was exercised from outside the repository. It
+  emitted exactly one line containing the declared public host,
   port 443, TLS and the correct private instance password. An unrelated hostname
   was rejected without printing the link or password.
 - The shared UI's pinned pairing dialog was extended to accept direct TCP URIs
@@ -154,3 +155,21 @@ origins was not established by the migration checks.
 
 The browser checks above exercise functional interactions; no manual visual
 layout review or machine reboot was performed.
+
+## Service command interface verified on 2026-10-10
+
+- The public Just recipes are `svc` and `gateway`. `bin/svc` discovers module
+  entrypoints and forwards arguments as separate values. Help, documentation and
+  error hints use `just svc <service> <action>`.
+- Ten isolated command checks passed through the real Just interface: module
+  discovery, literal argument forwarding, service help, distinct environment
+  credentials, credential-free listings and unavailable reasons, non-interactive
+  behavior, name/number selection, single-target Enter default, cancellation,
+  hostname aliases and unavailable container status. The 27 gateway checks also
+  passed.
+- The live demo was selected through a terminal and addressed explicitly from
+  outside the repository. Both commands emitted exactly one correct link on
+  stdout; metadata and prompts stayed on stderr without its password.
+- Read-only status commands succeeded for all three modules: demo remained
+  running and Codex authenticated, the shared UI was running and the Tunnel edge
+  was ready. No build, deploy, stop or restart was run for this CLI change.

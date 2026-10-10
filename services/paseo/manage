@@ -156,14 +156,14 @@ def health(instance, c, timeout=45):
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             pass
         time.sleep(1)
-    raise RuntimeError(f"{instance}: health check timed out at {url}; inspect 'just logs paseo {instance}'")
+    raise RuntimeError(f"{instance}: health check timed out at {url}; inspect 'just svc paseo logs {instance}'")
 
 
 def deploy(instance):
     c = config(instance)
     image = inspect("image", c["image_ref"])
     if not image:
-        raise RuntimeError("Pinned image missing. Run 'just build paseo' first")
+        raise RuntimeError("Pinned image missing. Run 'just svc paseo build' first")
     secret = prepare_password(instance)
     spec = hashlib.sha256(json.dumps({"config": c, "image": image["Id"], "password": secret,
                                      "implementation": Path(__file__).read_text()}, sort_keys=True).encode()).hexdigest()
@@ -267,11 +267,20 @@ def status():
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["build", "deploy", "status", "logs", "stop", "restart", "login", "auth-status", "device-login", "verify", "smoke", "endpoint", "verify-public"])
+    if sys.argv[1:2] == ["pair"]:
+        result = subprocess.run([sys.executable, str(SERVICE / "pair"), *sys.argv[2:]])
+        sys.exit(result.returncode)
+    parser = argparse.ArgumentParser(prog="just svc paseo", description=__doc__)
+    parser.add_argument("command", nargs="?", choices=["build", "deploy", "status", "logs", "stop", "restart", "login", "auth-status", "device-login", "verify", "smoke", "endpoint", "verify-public", "pair"])
     parser.add_argument("instance", nargs="?")
     parser.add_argument("--hostname")
     args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        print()
+        sys.stdout.flush()
+        subprocess.run([sys.executable, str(SERVICE / "pair"), "--list"], check=True)
+        return
     if args.hostname and args.command != "verify-public":
         parser.error("--hostname is only accepted by verify-public")
     os.umask(0o077)

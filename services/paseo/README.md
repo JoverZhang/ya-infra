@@ -9,9 +9,9 @@ managed by these commands.
 
 ```bash
 cd ~/infra
-just build paseo
-just deploy paseo demo
-just status paseo
+just svc paseo build
+just svc paseo deploy demo
+just svc paseo status
 ```
 
 The deployed versions are Paseo **0.9.1**, Codex **0.159.2** and Node **25.9.0**.
@@ -53,8 +53,8 @@ All initial instances may use the owner's ChatGPT account. Each instance must
 complete its own login to obtain a separate refreshable authentication session:
 
 ```bash
-just login paseo demo
-just auth-status paseo demo
+just svc paseo login demo
+just svc paseo auth-status demo
 ```
 
 The login wizard opens the device authentication page. Enter the one-time code
@@ -79,7 +79,7 @@ memory = "4g"
 pids_limit = 512
 ```
 
-Then run `just deploy paseo <name>` and `just login paseo <name>`. The two volumes
+Then run `just svc paseo deploy <name>` and `just svc paseo login <name>`. The two volumes
 are `infra-paseo-<name>-home` and `infra-paseo-<name>-workspace`. Browser files live
 under `/workspace`; local Paseo and Codex sessions live under `/home/paseo`.
 
@@ -118,11 +118,11 @@ volume. It does not inherit the host's skills, MCP configuration or local histor
 ## Operations and upgrades
 
 ```bash
-just logs paseo demo
-just stop paseo demo
-just restart paseo demo
-just verify paseo
-just smoke paseo demo
+just svc paseo logs demo
+just svc paseo stop demo
+just svc paseo restart demo
+just svc paseo verify
+just svc paseo smoke demo
 ```
 
 `verify` checks runtime restrictions, password authentication, host reachability
@@ -151,10 +151,14 @@ the Tunnel route and DNS. Each instance retains its own password. The initial
 declaration is `paseo1.example.com → paseo/demo`; publishing it requires the
 gateway's management credential.
 
-Run `just pair paseo demo` and paste its single output line into **Paste pairing
+Run `just svc paseo pair demo` and paste its single output line into **Paste pairing
 link** on the shared [paseo.example.com](https://paseo.example.com) website. The link
 includes that instance's public host, TLS and password. Use the instance name for
-each family environment; an optional final hostname selects among aliases.
+each family environment; `--hostname <hostname>` selects among aliases.
+Omit `demo` to choose from a menu, or use `--list` to see environments, public
+hosts, local running status and reasons a link cannot yet be generated. An Enter
+default is offered only for a unique target; multiple targets require a choice.
+Only the chosen link is printed to stdout. Listing does not reveal passwords.
 
 For manual **Direct connection** setup, add Host
 `paseo1.example.com`, Port `443`, **Use SSL** enabled, with the `demo` password from
@@ -169,7 +173,7 @@ to apply its new origin list. Password admission and host checks still apply.
 
 This backend exports `endpoint <instance>` as JSON containing `url` and
 `health_path`, and `verify-public <instance> --hostname <declared-hostname>` for
-HTTPS and WebSocket checks. With one Route, `just verify-public paseo demo` is a
+HTTPS and WebSocket checks. With one Route, `just svc paseo verify-public demo` is a
 convenience command; multiple Routes should be verified by gateway Route name.
 
 Sources: [Paseo Docker deployment](https://github.com/getpaseo/paseo/blob/main/public-docs/docker.md),

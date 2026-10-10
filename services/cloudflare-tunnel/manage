@@ -124,7 +124,7 @@ def health(c, timeout=60):
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             pass
         time.sleep(1)
-    raise RuntimeError("Cloudflare edge readiness timed out; inspect 'just logs cloudflare-tunnel'")
+    raise RuntimeError("Cloudflare edge readiness timed out; inspect 'just svc cloudflare-tunnel logs'")
 
 
 def retire_legacy():
@@ -146,7 +146,7 @@ def deploy():
     c = settings()
     image = inspect("image", c["image_ref"])
     if not image:
-        raise RuntimeError("Pinned image missing. Run 'just build cloudflare-tunnel' first")
+        raise RuntimeError("Pinned image missing. Run 'just svc cloudflare-tunnel build' first")
     token = (CONFIG / "token").read_text().strip()
     secret_name, token_hash = secret(token)
     spec = hashlib.sha256(json.dumps({"config": c, "image": image["Id"], "token": token_hash,
@@ -238,10 +238,13 @@ def verify():
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["adopt", "build", "deploy", "status", "logs", "stop", "restart", "verify"])
+    parser = argparse.ArgumentParser(prog="just svc cloudflare-tunnel", description=__doc__)
+    parser.add_argument("command", nargs="?", choices=["adopt", "build", "deploy", "status", "logs", "stop", "restart", "verify"])
     parser.add_argument("legacy_name", nargs="?")
     args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        return
     os.umask(0o077)
     private_directory(STATE)
     with (STATE / "manage.lock").open("a") as lock:

@@ -7,11 +7,11 @@ same remotely managed tunnel and its Cloudflare-side route configuration.
 
 ```bash
 cd ~/infra
-just adopt cloudflare-tunnel cloudflare-tunnel
-just build cloudflare-tunnel
-just deploy cloudflare-tunnel
-just status cloudflare-tunnel
-just verify cloudflare-tunnel
+just svc cloudflare-tunnel adopt cloudflare-tunnel
+just svc cloudflare-tunnel build
+just svc cloudflare-tunnel deploy
+just svc cloudflare-tunnel status
+just svc cloudflare-tunnel verify
 ```
 
 `adopt` reads the existing token without displaying it and stores it at
@@ -40,16 +40,16 @@ the current container. Existing routes remain configured in Cloudflare:
 | `cpe.example.com` | `http://localhost:27310` |
 
 ```bash
-just logs cloudflare-tunnel
-just restart cloudflare-tunnel
-just stop cloudflare-tunnel
+just svc cloudflare-tunnel logs
+just svc cloudflare-tunnel restart
+just svc cloudflare-tunnel stop
 ```
 
 To temporarily roll back this migration, stop the managed connector and start
 the retained legacy container through the same rootless socket:
 
 ```bash
-just stop cloudflare-tunnel
+just svc cloudflare-tunnel stop
 podman --remote --url unix:///run/user/$(id -u)/podman/podman.sock start cloudflare-tunnel
 ```
 

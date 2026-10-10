@@ -73,7 +73,7 @@ def health(c, timeout=30):
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             pass
         time.sleep(1)
-    raise RuntimeError("paseo-web health check failed; inspect 'just logs paseo-web'")
+    raise RuntimeError("paseo-web health check failed; inspect 'just svc paseo-web logs'")
 
 
 def build(c):
@@ -101,7 +101,7 @@ def build(c):
 def deploy(c):
     image = inspect("image", c["image_ref"])
     if not image:
-        raise RuntimeError("Shared UI image missing; run 'just build paseo-web'")
+        raise RuntimeError("Shared UI image missing; run 'just svc paseo-web build'")
     spec = hashlib.sha256(json.dumps({"config": c, "image": image["Id"],
                                      "implementation": Path(__file__).read_text()}, sort_keys=True).encode()).hexdigest()
     current = inspect("container", NAME)
@@ -176,11 +176,14 @@ def verify(c):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["build", "deploy", "endpoint", "status", "logs", "stop", "restart", "verify", "verify-public"])
+    parser = argparse.ArgumentParser(prog="just svc paseo-web", description=__doc__)
+    parser.add_argument("command", nargs="?", choices=["build", "deploy", "endpoint", "status", "logs", "stop", "restart", "verify", "verify-public"])
     parser.add_argument("instance", nargs="?", default="main")
     parser.add_argument("--hostname")
     args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        return
     if args.instance != "main":
         raise ValueError("The shared UI uses the single instance 'main'")
     c = config()

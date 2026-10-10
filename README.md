@@ -6,13 +6,15 @@ Podman socket at `/run/user/$(id -u)/podman/podman.sock`; no second engine is cr
 ```bash
 cd ~/infra
 just --list
-just build paseo
-just deploy paseo demo
-just status paseo
-just pair paseo demo
-just verify paseo
-just smoke paseo demo
-just status cloudflare-tunnel
+just svc
+just svc paseo
+just svc paseo build
+just svc paseo deploy demo
+just svc paseo status
+just svc paseo pair demo
+just svc paseo verify
+just svc paseo smoke demo
+just svc cloudflare-tunnel status
 just gateway plan paseo1
 just gateway status paseo1
 ```
@@ -22,6 +24,17 @@ the same template and separate data volumes. Each service owns its deployment
 script, pinned versions and documentation under `services/<name>/`; the root
 `justfile` supplies the common command interface. Browserlab migration will be
 discussed separately.
+
+The two public entrypoints are `just svc <service> <action> [instance] [options]`
+and `just gateway <action> [route]`. `bin/svc` discovers each module's `manage`
+entrypoint and forwards its arguments without shell interpolation. Each module
+owns its actions and help. Omitting the service lists available modules; omitting
+the action shows that module's help. Service actions live under `svc`.
+
+`just svc paseo pair` lists eligible environments and prompts for a number or
+name. `just svc paseo pair --list` lists metadata without credentials;
+`just svc paseo pair demo` prints just one connection link. Only a single target
+can be selected with Enter; multiple targets require an explicit choice.
 
 | Definition | Location |
 | --- | --- |
@@ -47,7 +60,7 @@ local control module with Gateway/Route concepts; it adds no proxy or Kubernetes
 runtime. Backend instances keep their own files, sessions, login and password.
 
 The shared browser entry is [paseo.example.com](https://paseo.example.com). Run
-`just pair paseo demo` and paste its one-line output into **Paste pairing link**.
+`just svc paseo pair demo` and paste its one-line output into **Paste pairing link**.
 It includes the declared public hostname, port 443, TLS and that instance's
 password. The shared UI keeps each browser's connection catalog; the selected
 environment holds sessions and files. Treat the generated link as the instance
@@ -58,7 +71,7 @@ For a fresh installation, set up the management credential once, then publish:
 ```bash
 just gateway setup
 just gateway apply paseo1
-just build paseo-web
+just svc paseo-web build
 just gateway apply paseo-web
 ```
 

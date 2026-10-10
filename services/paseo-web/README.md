@@ -11,17 +11,23 @@ to use. The website is the shared client; each host is a separate Paseo daemon:
 Generate a complete connection link with one command, from any directory:
 
 ```bash
-just -f ~/infra/justfile pair paseo demo
+just -f ~/infra/justfile svc paseo pair
 ```
 
+Choose an environment from the menu, or append `demo` to print its link directly.
+Use `just svc paseo pair --list` to inspect candidates without printing passwords.
 Copy the single output line, open the shared website, choose **Paste pairing
 link**, paste and select **Pair**. Refresh an already open website tab to load
 the direct-link importer. The `tcp://...:443?ssl=true&password=...` line includes
 the instance password; share it only with the people who should use that
 environment. For another instance, replace `demo` with its name. If an instance
-has multiple declared public hostnames, append the desired hostname to the
-command. Generating the link reads local declarations and the existing private
-password; it makes no network request or deployment change.
+has multiple declared public hostnames, choose the corresponding menu number or
+pass `--hostname <hostname>`. Generating an explicit link reads local declarations
+and the existing private password. The menu also reads the local container
+status; no Cloudflare API request or deployment change is made. Stopped instances
+can generate links for use after they start. Non-interactive calls must name the
+environment (and hostname when ambiguous). Menus and errors go to stderr; only
+the selected link goes to stdout. EOF or `q` cancels without printing a link.
 
 For manual setup in **Direct connection**, enter Host `paseo1.example.com`, Port
 `443`, enable **Use SSL**, and enter the password from
@@ -40,14 +46,14 @@ copied automatically across browser origins.
 ## Deployment
 
 ```bash
-just build paseo-web
-just deploy paseo demo             # Regenerate its allowed browser origins
+just svc paseo-web build
+just svc paseo deploy demo             # Regenerate its allowed browser origins
 just gateway plan paseo-web
 just gateway apply paseo-web
-just verify paseo-web
+just svc paseo-web verify
 just gateway verify paseo-web
-just status paseo-web
-just logs paseo-web
+just svc paseo-web status
+just svc paseo-web logs
 ```
 
 Declare the shared website in `gateway/routes/paseo-web.toml`. Paseo environments

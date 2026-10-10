@@ -22,7 +22,7 @@ def describe(route, endpoint):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog="just gateway", description=__doc__)
     parser.add_argument("command", choices=["plan", "apply", "status", "verify", "setup", "check-credentials", "legacy-publish"])
     parser.add_argument("route", nargs="?")
     parser.add_argument("hostname", nargs="?")
