@@ -60,10 +60,12 @@ local control module with Gateway/Route concepts; it adds no proxy or Kubernetes
 runtime. Backend instances keep their own files, sessions, login and password.
 
 The shared browser entry is [paseo.example.com](https://paseo.example.com). Run
-`just svc paseo pair demo` and paste its one-line output into **Paste pairing link**.
-It includes the declared public hostname, port 443, TLS and that instance's
-password. The shared UI keeps each browser's connection catalog; the selected
-environment holds sessions and files. Treat the generated link as the instance
+`just svc paseo pair demo` and paste its one-line output into **Direct connection
+→ Advanced → Connection URI**. Press **Enter** to apply the URI, then select
+**Connect**. It includes the declared public hostname, port 443, TLS and that
+instance's password. The shared UI serves unmodified official Paseo assets and
+keeps each browser's connection catalog; the selected environment holds sessions
+and files. Treat the generated link as the instance
 password. See [shared UI operations](services/paseo-web/README.md).
 
 For a fresh installation, set up the management credential once, then publish:

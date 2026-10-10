@@ -134,6 +134,9 @@ origins was not established by the migration checks.
 
 ## Direct pairing import verified on 2026-10-09
 
+This records the former custom frontend import extension. The extension was
+removed on 2026-10-10; current usage is Paseo's native Direct connection flow.
+
 - The pairing link command was exercised from outside the repository. It
   emitted exactly one line containing the declared public host,
   port 443, TLS and the correct private instance password. An unrelated hostname
@@ -173,3 +176,26 @@ layout review or machine reboot was performed.
 - Read-only status commands succeeded for all three modules: demo remained
   running and Codex authenticated, the shared UI was running and the Tunnel edge
   was ready. No build, deploy, stop or restart was run for this CLI change.
+
+## Official frontend restored on 2026-10-10
+
+- Removed `pairing.py`, `direct-pairing.js` and the frontend build hook. The
+  shared UI was rebuilt and deployed with unchanged Paseo 0.9.1 distribution
+  assets. All 57 deployed files matched the verified source snapshot byte for
+  byte, including HTML, the original JavaScript filename and compressed assets.
+- Chromium used the native Direct connection → Advanced → Connection URI flow:
+  pasting the CLI output and pressing Enter applied host, port, SSL and password;
+  Connect authenticated to the real public backend WebSocket and saved the
+  connection. It remained saved after reload. A connection saved before the
+  frontend replacement also survived and authenticated using the restored UI.
+- Browser interactions loaded the exact deployed assets over loopback under the
+  shared HTTPS Origin, with the backend WebSocket going to the real public host.
+  Separate public HTTPS/assets/SPA/CORS/password/WebSocket checks passed and the
+  shared frontend Route is recorded as `verified`.
+- Frontend runtime restrictions passed. Only the frontend container was replaced;
+  backend and Tunnel container IDs stayed unchanged and running, and the
+  environment password was unchanged. No backend deployment, restart or model
+  inference was performed for this restoration.
+- All 10 command-interface and 27 gateway checks passed. Documentation and
+  command help now describe native direct URI import. The private temporary
+  browser profile used for the checks was deleted afterwards.

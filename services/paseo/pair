@@ -76,13 +76,13 @@ def available_targets(instance=None):
 
 
 def show_targets(targets, unavailable, stream):
-    print("可生成配对链接的 Paseo 环境：", file=stream)
+    print("可生成直连连接串的 Paseo 环境：", file=stream)
     for number, target in enumerate(targets, 1):
         print(f"  {number}) {target['instance']:16} {target['hostname']:30} {target['state']}", file=stream)
     if not targets:
-        print("  暂无可配对环境", file=stream)
+        print("  暂无可直连环境", file=stream)
     if unavailable:
-        print("\n尚不能生成链接：", file=stream)
+        print("\n尚不能生成连接串：", file=stream)
         for name, reason in unavailable:
             print(f"  {name}: {reason}", file=stream)
 
@@ -124,10 +124,11 @@ def pairing_link(instance, hostname=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="just svc paseo pair", description=__doc__)
+    parser = argparse.ArgumentParser(prog="just svc paseo pair", description=__doc__,
+        epilog="在 Web 的 Direct connection → Advanced → Connection URI 中粘贴，按 Enter 后选择 Connect。")
     parser.add_argument("instance", nargs="?", help="环境名；省略则选择环境")
     parser.add_argument("--hostname", help="选择该环境的一个已声明公网域名")
-    parser.add_argument("--list", action="store_true", help="只列环境信息，不输出密码或链接")
+    parser.add_argument("--list", action="store_true", help="只列环境信息，不输出密码或连接串")
     args = parser.parse_args()
     if args.hostname and not args.instance:
         parser.error("--hostname 需要指定环境名")
@@ -139,7 +140,7 @@ def main():
     if args.hostname:
         targets = [target for target in targets if target["hostname"] == args.hostname]
         if not targets:
-            raise ValueError("该域名不是此环境的可配对公网域名")
+            raise ValueError("该域名不是此环境的可直连公网域名")
     show_targets(targets, unavailable, sys.stdout if args.list else sys.stderr)
     if args.list:
         return 0

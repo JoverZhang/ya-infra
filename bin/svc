@@ -25,7 +25,7 @@ def help_text(modules):
             description = ""
         lines.append(f"  {name:20} {description}")
     lines.extend(["", "just svc <服务>            查看动作和环境",
-                  "just svc paseo pair        选择环境并生成配对链接",
+                  "just svc paseo pair        选择环境并生成直连连接串",
                   "just gateway               查看公网路由管理用法"])
     return "\n".join(lines)
 

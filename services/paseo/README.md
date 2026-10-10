@@ -151,9 +151,11 @@ the Tunnel route and DNS. Each instance retains its own password. The initial
 declaration is `paseo1.example.com → paseo/demo`; publishing it requires the
 gateway's management credential.
 
-Run `just svc paseo pair demo` and paste its single output line into **Paste pairing
-link** on the shared [paseo.example.com](https://paseo.example.com) website. The link
-includes that instance's public host, TLS and password. Use the instance name for
+Run `just svc paseo pair demo` and paste its single output line into **Direct
+connection → Advanced → Connection URI** on the shared
+[paseo.example.com](https://paseo.example.com) website. Press **Enter** to apply the
+URI, then select **Connect**. The link includes that instance's public host, TLS
+and password. Use the instance name for
 each family environment; `--hostname <hostname>` selects among aliases.
 Omit `demo` to choose from a menu, or use `--list` to see environments, public
 hosts, local running status and reasons a link cannot yet be generated. An Enter

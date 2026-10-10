@@ -8,7 +8,7 @@ to use. The website is the shared client; each host is a separate Paseo daemon:
 | `https://paseo.example.com` | Shared browser UI, served by `paseo-web/main` |
 | `paseo1.example.com:443`, SSL enabled | `paseo/demo` environment |
 
-Generate a complete connection link with one command, from any directory:
+Generate a complete direct connection URI with one command, from any directory:
 
 ```bash
 just -f ~/infra/justfile svc paseo pair
@@ -16,10 +16,14 @@ just -f ~/infra/justfile svc paseo pair
 
 Choose an environment from the menu, or append `demo` to print its link directly.
 Use `just svc paseo pair --list` to inspect candidates without printing passwords.
-Copy the single output line, open the shared website, choose **Paste pairing
-link**, paste and select **Pair**. Refresh an already open website tab to load
-the direct-link importer. The `tcp://...:443?ssl=true&password=...` line includes
-the instance password; share it only with the people who should use that
+Copy the single output line, open the shared website, choose **Direct connection
+→ Advanced → Connection URI**, and paste it. Press **Enter** (or close the
+Advanced section) to apply the URI to the connection fields, then select
+**Connect**. Paseo's **Paste pairing link** dialog handles relay offer links;
+use Direct connection for this TCP URI. Refresh an already open tab after a
+frontend deployment to load the current UI. The
+`tcp://...:443?ssl=true&password=...` line includes the instance password; share
+it only with the people who should use that
 environment. For another instance, replace `demo` with its name. If an instance
 has multiple declared public hostnames, choose the corresponding menu number or
 pass `--hostname <hostname>`. Generating an explicit link reads local declarations
@@ -32,8 +36,6 @@ the selected link goes to stdout. EOF or `q` cancels without printing a link.
 For manual setup in **Direct connection**, enter Host `paseo1.example.com`, Port
 `443`, enable **Use SSL**, and enter the password from
 `~/.config/infra/paseo/demo/password`.
-The advanced Connection URI is `tcp://paseo1.example.com:443?ssl=true`; keep the
-password in its separate field.
 
 The connection catalog and saved passwords live in each browser's localStorage
 under the shared website origin. Different browsers configure their own catalog.
@@ -64,15 +66,18 @@ origin allowance is not used. Apply the environment Routes before the shared UI;
 `just gateway apply` automatically uses this order. Shared UI public verification
 also checks the declared environments, so they must already be available.
 
-The image copies the bundled web assets from the same verified program snapshot
-used by `services/paseo`. A small extension lets the pinned Paseo 0.9.1
-**Paste pairing link** dialog accept direct TCP connection URIs, using the app's
-existing URI parser and authenticated probe/save operation. The generated link
-works in this shared frontend; a daemon-served page can use it in **Direct
-connection → Advanced → Connection URI**. The version check in `pairing.py`
-requires the exact expected dialog hash, and the build checks JavaScript syntax.
-An upstream change requires review before rebuilding. The patched bundle gets a
-new content hash and gzip asset; hard-linked verified inputs stay unchanged.
+The image copies the official bundled web assets unchanged from the same
+verified program snapshot used by `services/paseo`, including the original
+HTML, JavaScript filenames and gzip files. No frontend source patch or bundle
+rewriting is applied. The direct connection URI uses Paseo's native import flow
+on both the shared UI and daemon-served pages. Frontend deployments have no
+persistent data to migrate; saved browser connections use Paseo's native format.
+
+Versions stay pinned. For an upgrade, prepare a verified snapshot for the chosen
+version, use new image tags, and test the backend and shared UI together on
+`demo` before deploying the other environments. Keep the previous image tags
+available for rollback. Native UI or protocol changes still need a compatibility
+check, but there is no custom client patch to port.
 
 The runtime uses digest-pinned unprivileged NGINX,
 UID/GID 101, a read-only root filesystem, zero capabilities, no-new-privileges,

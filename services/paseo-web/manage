@@ -20,7 +20,6 @@ SERVICE = Path(__file__).resolve().parent
 ROOT = SERVICE.parents[1]
 sys.path.insert(0, str(ROOT))
 from gateway.model import hostnames_for, read_toml
-from pairing import patch_assets
 
 ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
 NAME = "infra-paseo-web-main"
@@ -91,11 +90,9 @@ def build(c):
         for filename in ("Containerfile", "nginx.conf"):
             shutil.copy2(SERVICE / filename, context / filename)
         shutil.copytree(assets, context / "web-ui", copy_function=os.link)
-        bundle = patch_assets(context / "web-ui")
-        subprocess.run([str(artifacts / "node"), "--check", str(bundle)], check=True)
         engine("build", "--pull=never", "--build-arg", "BASE_IMAGE=" + c["base_image"],
                "-t", c["image_ref"], *label_args(), str(context))
-    print("Built shared UI from the verified Paseo", paseo["paseo_version"], "assets")
+    print("Built shared UI from unmodified verified Paseo", paseo["paseo_version"], "assets")
 
 
 def deploy(c):
