@@ -13,5 +13,9 @@ argument lists and live values.
 | Choosing verification or evaluating a change | [Checks](checks/README.md) |
 
 Keep each decision or operational caveat in its owning document. Add a pointer
-when a task needs it; use source/config/help for inexpensive lookups. Historical
-evidence belongs in Git history, outside the normal reading path.
+when a task needs it; use source/config/help for inexpensive lookups. Public
+historical evidence belongs in Git history, outside the normal reading path.
+
+User-level state holds application state and locks. Keep task artifacts in
+the project's ignored `.infra/artifacts/` and development backups in
+`.infra/backups/`; use temporary directories for intermediate work.

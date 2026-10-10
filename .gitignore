@@ -8,3 +8,4 @@ auth.json
 *.tar.gz
 *.log
 infra.toml
+/.infra/
