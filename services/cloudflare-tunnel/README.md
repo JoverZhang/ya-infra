@@ -1,89 +1,20 @@
-# Cloudflare Tunnel
+# Cloudflared connector
 
-This module takes over the existing `cloudflare-tunnel` connector. It keeps the
-same remotely managed tunnel and its Cloudflare-side route configuration.
-The invocation directory's `./infra.toml` table `[services.cloudflare-tunnel]`
-pins the existing cloudflared **2026.7.2** image by digest and controls resource
-limits and the loopback metrics port.
+This is the Tunnel data plane. Host networking preserves access to the existing
+host-loopback origins; changing that network requires revisiting every origin.
+Remote routing is managed by the [Gateway](../../gateway/README.md).
 
-```bash
-cd ~/infra
-just svc cloudflare-tunnel adopt cloudflare-tunnel
-just svc cloudflare-tunnel build
-just svc cloudflare-tunnel deploy
-just svc cloudflare-tunnel status
-just svc cloudflare-tunnel verify
-```
+## Image upgrades
 
-`adopt` reads the existing token without displaying it and stores it at
-`~/.config/infra/cloudflare-tunnel/token` (mode 0600). Deployment passes it through
-standard input into a labeled Podman secret, mounted read-only at
-`/run/secrets/tunnel-token` with uid/gid 65532 and mode 0400. The new connector uses
-`--token-file`; its process arguments and environment contain no tunnel token.
-The local credential file and Podman's secret storage both stay outside Git.
+Update the pinned cloudflared digest/version, run `build` to pull that image,
+then `deploy` with the existing connector credential. Check edge readiness and
+[public delivery](../../checks/README.md) before considering the rollout complete.
+Replacing the connector leaves Cloudflare-side routing in place.
 
-The managed container is `infra-cloudflare-tunnel`, with `restart=always`,
-uid/gid 65532, a read-only image filesystem, no capabilities and
-`no-new-privileges`. Host networking preserves existing routes to host loopback
-services. This connector can access host networking; the separate Paseo runtime
-uses its own restricted bridge. Metrics and readiness bind only to
-`127.0.0.1:20242`.
+## Adoption and cutover
 
-On the first migration, the new connector joins the same tunnel as a second
-replica. Only after its `/ready` endpoint succeeds is the old connector stopped.
-The old `cloudflare-tunnel` container is kept for rollback. Later replacements
-restore the prior managed container if startup fails. An unchanged deploy keeps
-the current container. Existing routes remain configured in Cloudflare:
-
-| Hostname | Origin |
-| --- | --- |
-| `privateapi.example.com` | `http://127.0.0.1:28080` |
-| `cpe.example.com` | `http://localhost:27310` |
-
-```bash
-just svc cloudflare-tunnel logs
-just svc cloudflare-tunnel restart
-just svc cloudflare-tunnel stop
-```
-
-To temporarily roll back this migration, stop the managed connector and start
-the retained legacy container through the same rootless socket:
-
-```bash
-just svc cloudflare-tunnel stop
-podman --remote --url unix:///run/user/$(id -u)/podman/podman.sock start cloudflare-tunnel
-```
-
-This is an immediate rollback. The managed connector's `always` policy may start
-it again at the next boot. No route or credential is deleted by these commands.
-
-## Gateway publication
-
-The recovered connector token starts the tunnel. The separate
-[gateway](../../gateway/README.md) manages hostname routes and DNS using a scoped
-Cloudflare management API token. The connector module owns only the running
-`cloudflared` container, its resources and its connector credential.
-
-```bash
-just gateway setup
-just gateway plan paseo1
-just gateway apply paseo1
-```
-
-The gateway reads the current remote configuration and merges only the selected
-Route. Existing `privateapi.example.com`, `cpe.example.com`, origin options and the
-catch-all rule are preserved. Each Paseo instance requires its own daemon password.
-
-The old script name remains as a forwarding entry point:
-
-```bash
-bash services/cloudflare-tunnel/publish-paseo-wizard.sh demo paseo1.example.com
-```
-
-It requires an already declared Route and invokes gateway `apply`; it does not
-edit backend settings or offer a second hostname source. DNS and certificate
-propagation may take time. If publication succeeds but the public checks fail,
-rerun `just gateway verify paseo1` after propagation.
-
-Sources: [Cloudflare published application setup](https://developers.cloudflare.com/tunnel/get-started/),
-[cloudflared run parameters](https://developers.cloudflare.com/tunnel/reference/run-parameters/).
+`adopt` recovers the existing connector credential and records the legacy
+container identity. Deployment retires that container only after the managed
+connector is ready. Keep the stopped legacy container during cutover; rollback
+can stop the managed connector and start the recorded legacy container, retaining
+the current remote configuration.
