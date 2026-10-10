@@ -8,7 +8,8 @@ to use. The website is the shared client; each host is a separate Paseo daemon:
 | `https://paseo.example.com` | Shared browser UI, served by `paseo-web/main` |
 | `paseo1.example.com:443`, SSL enabled | `paseo/demo` environment |
 
-Generate a complete direct connection URI with one command, from any directory:
+Generate a complete direct connection URI from the directory containing
+your `infra.toml`:
 
 ```bash
 just -f ~/infra/justfile svc paseo pair
@@ -58,7 +59,8 @@ just svc paseo-web status
 just svc paseo-web logs
 ```
 
-Declare the shared website in `gateway/routes/paseo-web.toml`. Paseo environments
+Declare the shared website in `./infra.toml` under `[gateway.routes.paseo-web]`.
+The `[services.paseo-web]` table sets its image and port. Paseo environments
 derive allowed HTTPS origins from the `paseo-web` Routes, plus their own Routes.
 Deploy an environment again after adding or changing a shared UI Route; the
 Paseo login, home and workspace remain in its existing volumes. A blanket `*`

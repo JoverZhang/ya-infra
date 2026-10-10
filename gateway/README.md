@@ -1,10 +1,12 @@
 # Shared public gateway
 
-`public.toml` identifies the existing remotely managed Cloudflare Tunnel and its
-account and zone. These identifiers are public references, not credentials.
-`routes/<name>.toml` maps one exact hostname to a backend instance:
+`./infra.toml` in the invocation directory is the single deployment configuration.
+Its `[gateway.public]` table identifies the existing remotely managed Cloudflare
+Tunnel and its account and zone. These identifiers are public references, not credentials.
+`[gateway.routes.<name>]` maps one exact hostname to a backend instance:
 
 ```toml
+[gateway.routes.paseo1]
 gateway = "public"
 hostname = "paseo1.example.com"
 backend = "paseo/demo"
@@ -46,7 +48,7 @@ for a custom user token with these permissions:
 
 | Scope | Permission | Resource restriction |
 | --- | --- | --- |
-| Account | Cloudflare One Connector: cloudflared / Edit (older label: Cloudflare Tunnel / Edit) | The account in `public.toml` |
+| Account | Cloudflare One Connector: cloudflared / Edit (older label: Cloudflare Tunnel / Edit) | The account in `[gateway.public]` |
 | Zone | DNS / Edit | `example.com` |
 | Zone | Zone / Read | `example.com` |
 

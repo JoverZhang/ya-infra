@@ -7,3 +7,4 @@ auth.json
 *.tar
 *.tar.gz
 *.log
+infra.toml

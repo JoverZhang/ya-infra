@@ -14,13 +14,13 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 import urllib.error
 import urllib.request
 
 SERVICE = Path(__file__).resolve().parent
 sys.path.insert(0, str(SERVICE.parents[1]))
 from gateway.model import hostnames_for, origins_for_service
+from infra_config import section
 
 ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "infra/paseo"
@@ -59,17 +59,26 @@ def owned(data, instance):
 
 
 def versions():
-    with (SERVICE / "versions.toml").open("rb") as f:
-        return tomllib.load(f)
+    return section("services", "paseo", "versions")
+
+
+def instances():
+    result = section("services", "paseo", "instances")
+    if any(not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", key) or not isinstance(value, dict)
+           for key, value in result.items()):
+        raise ValueError("services.paseo.instances requires valid instance names and tables")
+    return result
 
 
 def config(instance):
     if not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", instance):
         raise ValueError("Instance names must contain lowercase letters, digits and single hyphens")
-    with (SERVICE / "instances" / f"{instance}.toml").open("rb") as f:
-        c = tomllib.load(f)
+    declared = instances()
+    if instance not in declared:
+        raise ValueError(f"Unknown Paseo instance: {instance}")
+    c = declared[instance]
     if set(c) - {"port", "cpus", "memory", "pids_limit", "image_ref"}:
-        raise ValueError(f"Unknown instance settings in {instance}.toml")
+        raise ValueError(f"Unknown instance settings in services.paseo.instances.{instance}")
     if type(c["port"]) is not int or not 1024 <= c["port"] <= 65535:
         raise ValueError("port must be an integer between 1024 and 65535")
     if type(c["cpus"]) not in (int, float) or not 0 < c["cpus"] <= 32:
@@ -78,10 +87,9 @@ def config(instance):
         raise ValueError("pids_limit must be between 64 and 4096")
     if not re.fullmatch(r"[1-9][0-9]*[mg]", c["memory"]):
         raise ValueError("memory must use a positive m/g value, e.g. 4g")
-    for other in (SERVICE / "instances").glob("*.toml"):
-        with other.open("rb") as f:
-            if other.stem != instance and tomllib.load(f).get("port") == c["port"]:
-                raise ValueError(f"Port {c['port']} also belongs to {other.stem}")
+    for other, settings in declared.items():
+        if other != instance and settings.get("port") == c["port"]:
+            raise ValueError(f"Port {c['port']} also belongs to {other}")
     c["image_ref"] = c.get("image_ref", versions()["image_ref"])
     c["hostnames"] = hostnames_for("paseo/" + instance)
     c["cors_origins"] = sorted({"https://" + host for host in c["hostnames"]}
@@ -253,17 +261,17 @@ def require_container(instance):
 
 
 def status():
-    for path in sorted((SERVICE / "instances").glob("*.toml")):
-        c = config(path.stem)
-        data = inspect("container", name(path.stem))
+    for instance in sorted(instances()):
+        c = config(instance)
+        data = inspect("container", name(instance))
         state = "not deployed"
         if data:
-            owned(data, path.stem)
+            owned(data, instance)
             state = data["State"]["Status"]
             if data["State"]["Running"]:
-                p = engine("exec", name(path.stem), "codex", "login", "status", capture=True, check=False)
+                p = engine("exec", name(instance), "codex", "login", "status", capture=True, check=False)
                 state += ", codex " + ("authenticated" if p.returncode == 0 else "login needed")
-        print(f"{path.stem:16} {state:32} http://127.0.0.1:{c['port']}")
+        print(f"{instance:16} {state:32} http://127.0.0.1:{c['port']}")
 
 
 def main():

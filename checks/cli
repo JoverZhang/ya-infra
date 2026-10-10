@@ -20,19 +20,21 @@ class CommandChecks(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory(prefix="infra-cli-check-")
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        for name in ("justfile", "bin/svc", "services/paseo/manage", "services/paseo/pair", "gateway/model.py"):
+        for name in ("justfile", "bin/svc", "services/paseo/manage", "services/paseo/pair",
+                     "services/paseo-web/manage", "gateway/model.py", "infra_config.py"):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, target)
         self.config = self.root / "private"
         self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.config)}
-        (self.root / "gateway/public.toml").write_text(
-            'provider="cloudflare-tunnel"\nzone="example.test"\naccount_id="' + "a" * 32 + '"\n'
-            'tunnel_id="11111111-1111-4111-8111-111111111111"\n')
-        (self.root / "gateway/routes").mkdir()
-        (self.root / "services/paseo/instances").mkdir()
+        self.gateway = {"provider": "cloudflare-tunnel", "zone": "example.test", "account_id": "a" * 32,
+                        "tunnel_id": "11111111-1111-4111-8111-111111111111"}
+        self.routes = {}
+        self.instances = {}
+        self.web = {"port": 16780, "base_image": "docker.io/nginxinc/nginx-unprivileged@sha256:" + "a" * 64,
+                    "image_ref": "localhost/fixture-paseo-web:1"}
         for instance, password in PASSWORDS.items():
-            (self.root / "services/paseo/instances" / (instance + ".toml")).write_text("port=16770\n")
+            self.instances[instance] = {"port": 16770 + len(self.instances), "cpus": 2, "memory": "4g", "pids_limit": 512}
             self.route(instance, instance + ".example.test", instance)
             secret = self.config / "infra/paseo" / instance / "password"
             secret.parent.mkdir(parents=True)
@@ -53,17 +55,30 @@ class CommandChecks(unittest.TestCase):
         self.env["PATH"] = str(engine.parent) + os.pathsep + os.environ["PATH"]
 
     def route(self, name, hostname, instance):
-        (self.root / "gateway/routes" / (name + ".toml")).write_text(
-            f'gateway="public"\nhostname="{hostname}"\nbackend="paseo/{instance}"\n')
+        self.routes[name] = {"gateway": "public", "hostname": hostname, "backend": "paseo/" + instance}
+        self.write_config()
 
-    def run_cli(self, *args, answers=None):
+    def write_config(self, directory=None):
+        lines = ["[gateway.public]", *(f'{key} = {json.dumps(value)}' for key, value in self.gateway.items())]
+        for name, route in self.routes.items():
+            lines.extend(["", f"[gateway.routes.{name}]",
+                          *(f'{key} = {json.dumps(value)}' for key, value in route.items())])
+        lines.extend(["", "[services.paseo.versions]", 'image_ref = "localhost/fixture-paseo:1"'])
+        for name, settings in self.instances.items():
+            lines.extend(["", f"[services.paseo.instances.{name}]",
+                          *(f'{key} = {json.dumps(value)}' for key, value in settings.items())])
+        lines.extend(["", "[services.paseo-web]",
+                      *(f'{key} = {json.dumps(value)}' for key, value in self.web.items())])
+        (directory or self.root).joinpath("infra.toml").write_text("\n".join(lines) + "\n")
+
+    def run_cli(self, *args, answers=None, cwd=None):
         command = ["just", "-f", str(self.root / "justfile"), *args]
         if answers is None:
-            return subprocess.run(command, cwd=self.root, env=self.env, stdin=subprocess.DEVNULL,
+            return subprocess.run(command, cwd=cwd or self.root, env=self.env, stdin=subprocess.DEVNULL,
                                   capture_output=True, text=True, timeout=10)
         master, slave = pty.openpty()
         try:
-            process = subprocess.Popen(command, cwd=self.root, env=self.env, stdin=slave,
+            process = subprocess.Popen(command, cwd=cwd or self.root, env=self.env, stdin=slave,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             os.close(slave)
             slave = None
@@ -123,9 +138,8 @@ class CommandChecks(unittest.TestCase):
         self.assertEqual(result.stderr, "")
 
     def test_list_shows_state_and_unavailable_reasons_without_credentials(self):
-        instances = self.root / "services/paseo/instances"
-        (instances / "no-route.toml").write_text("port=16771\n")
-        (instances / "no-password.toml").write_text("port=16772\n")
+        self.instances["no-route"] = {"port": 16771}
+        self.instances["no-password"] = {"port": 16772}
         self.route("no-password", "missing.example.test", "no-password")
         result = self.run_cli("svc", "paseo", "pair", "--list")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -146,7 +160,8 @@ class CommandChecks(unittest.TestCase):
         self.assertIn("请输入菜单中的编号或环境名", result.stderr)
 
     def test_single_target_has_enter_default_and_cancel_has_no_link(self):
-        (self.root / "services/paseo/instances/family-b.toml").unlink()
+        del self.instances["family-b"]
+        self.write_config()
         result = self.run_cli("svc", "paseo", "pair", answers="\n")
         self.assert_link(result, "family-a")
         self.assertIn("Enter 选择唯一环境", result.stderr)
@@ -168,6 +183,46 @@ class CommandChecks(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("状态未知", result.stdout)
         self.assertNotIn("private-provider-error", result.stdout + result.stderr)
+
+    def test_external_justfile_reads_configuration_from_invocation_directory(self):
+        project = self.root / "project with spaces and 'quotes'"
+        project.mkdir()
+        self.routes["family-a"]["hostname"] = "project.example.test"
+        self.write_config(project)
+        result = self.run_cli("svc", "paseo", "pair", "family-a", cwd=project)
+        self.assert_link(result, "family-a", "project.example.test")
+
+    def test_backend_endpoints_use_project_settings_with_external_justfile(self):
+        project = self.root / "endpoint-project"
+        project.mkdir()
+        self.instances["family-a"]["port"] = 17770
+        self.web["port"] = 17780
+        self.write_config(project)
+        for service, instance, port in (("paseo", "family-a", 17770), ("paseo-web", "main", 17780)):
+            result = self.run_cli("svc", service, "endpoint", instance, cwd=project)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["url"], f"http://127.0.0.1:{port}")
+
+    def test_missing_project_configuration_does_not_use_source_or_parent_configuration(self):
+        project = self.root / "no-config"
+        project.mkdir()
+        result = self.run_cli("svc", "paseo", "pair", "family-a", cwd=project)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("infra.toml", result.stderr)
+        self.assertIn("Missing", result.stderr)
+        for password in PASSWORDS.values():
+            self.assertNotIn(password, result.stdout + result.stderr)
+
+    def test_invalid_project_configuration_has_actionable_error_without_content(self):
+        project = self.root / "broken-config"
+        project.mkdir()
+        (project / "infra.toml").write_text('[gateway.public]\nzone="private-config-content\n')
+        result = self.run_cli("svc", "paseo", "pair", "family-a", cwd=project)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Invalid TOML", result.stderr)
+        self.assertNotIn("private-config-content", result.stderr)
 
 
 if __name__ == "__main__":

@@ -199,3 +199,29 @@ layout review or machine reboot was performed.
 - All 10 command-interface and 27 gateway checks passed. Documentation and
   command help now describe native direct URI import. The private temporary
   browser profile used for the checks was deleted afterwards.
+
+## Single invocation-directory configuration verified on 2026-10-10
+
+- Deployment declarations, program/image versions, instance ports and resource
+  limits now come from the invocation directory's single `./infra.toml`.
+  All previous deployment values were compared with the preceding committed
+  files and matched exactly. The nine dispersed configuration/example files
+  were removed; `infra.example.toml` supplies a public template with placeholder
+  gateway identifiers and hostnames. The actual file is mode 0600, ignored and
+  untracked. Private credentials and image-internal runtime templates remain
+  at their existing locations.
+- Fourteen command checks passed through real Just, including an external
+  justfile invoked from a project directory with spaces/quotes, project-specific
+  backend and frontend endpoint ports, and missing/broken configuration errors
+  without fallback to the source checkout or parent directory. All 27 gateway
+  checks also passed. Python syntax and the source credential scan passed.
+- Read-only service status, environment listing and artifact-snapshot integrity
+  checks passed. The shared frontend's public HTTPS/assets/SPA/CORS/password and
+  authenticated WebSocket checks passed and its Route is recorded as verified.
+- All three running container IDs and private credential-file hashes were
+  unchanged. No image build, deployment, restart, model inference, Tunnel update
+  or DNS write was performed during this migration.
+- Live gateway planning was attempted but blocked by the existing management
+  token's Client IP Address Filtering. Diagnostics confirmed an active token and
+  the provider's explicit IP rejection. Management operations require the owner
+  to update that rule; this did not prevent the public frontend/backend checks.

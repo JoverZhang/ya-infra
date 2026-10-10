@@ -15,7 +15,8 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from gateway.model import read_toml, routes
+from gateway.model import routes
+from infra_config import section
 
 loader = importlib.machinery.SourceFileLoader("paseo_manage", str(ROOT / "services/paseo/manage"))
 spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -55,7 +56,7 @@ def request(hostname, path, *, origin=None, password=None, method="GET"):
 
 
 def websocket_check(hostname, origin, password):
-    v = read_toml(ROOT / "services/paseo/versions.toml")
+    v = section("services", "paseo", "versions")
     cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "infra/paseo"
     bundle = cache / f"{v['paseo_version']}-{v['codex_version']}-{v['node_version']}-bundle{v['artifact_layout']}"
     package = bundle / "paseo/node_modules"

@@ -1,3 +1,0 @@
-gateway = "public"
-hostname = "paseo1.example.com"
-backend = "paseo/demo"

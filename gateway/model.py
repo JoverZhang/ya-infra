@@ -5,9 +5,10 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tomllib
 from urllib.parse import urlsplit
 import uuid
+
+from infra_config import section
 
 ROOT = Path(__file__).resolve().parents[1]
 IDENTIFIER = r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*"
@@ -22,15 +23,10 @@ class Route:
     backend: str
 
 
-def read_toml(path):
-    with path.open("rb") as f:
-        return tomllib.load(f)
-
-
-def public(root=ROOT):
-    c = read_toml(root / "gateway/public.toml")
+def public(root=None):
+    c = section("gateway", "public", root=root)
     if set(c) != {"provider", "zone", "account_id", "tunnel_id"} or not all(isinstance(x, str) for x in c.values()):
-        raise ValueError("public.toml requires provider, zone, account_id and tunnel_id")
+        raise ValueError("gateway.public requires provider, zone, account_id and tunnel_id")
     if c["provider"] != "cloudflare-tunnel":
         raise ValueError("Only the existing Cloudflare Tunnel provider is supported")
     if not re.fullmatch(DNS_NAME, c["zone"]) or len(c["zone"]) > 253:
@@ -42,32 +38,31 @@ def public(root=ROOT):
     return c
 
 
-def routes(root=ROOT):
+def routes(root=None):
     gateway = public(root)
     result = []
     seen = set()
-    for path in sorted((root / "gateway/routes").glob("*.toml")):
-        c = read_toml(path)
-        if (not re.fullmatch(IDENTIFIER, path.stem) or set(c) != {"gateway", "hostname", "backend"}
+    for name, c in sorted(section("gateway", "routes", root=root).items()):
+        if (not re.fullmatch(IDENTIFIER, name) or not isinstance(c, dict) or set(c) != {"gateway", "hostname", "backend"}
                 or not all(isinstance(x, str) for x in c.values())):
-            raise ValueError(f"Invalid route declaration: {path.name}")
+            raise ValueError(f"Invalid route declaration: {name}")
         if c["gateway"] != "public":
-            raise ValueError(f"{path.stem}: unknown gateway")
+            raise ValueError(f"{name}: unknown gateway")
         hostname = c["hostname"]
         if not re.fullmatch(DNS_NAME, hostname) or len(hostname) > 253:
-            raise ValueError(f"{path.stem}: use an exact lowercase DNS hostname")
+            raise ValueError(f"{name}: use an exact lowercase DNS hostname")
         if hostname != gateway["zone"] and not hostname.endswith("." + gateway["zone"]):
-            raise ValueError(f"{path.stem}: hostname is outside the gateway zone")
+            raise ValueError(f"{name}: hostname is outside the gateway zone")
         if hostname in seen:
             raise ValueError(f"Duplicate route hostname: {hostname}")
         if not re.fullmatch(IDENTIFIER + "/" + IDENTIFIER, c["backend"]):
-            raise ValueError(f"{path.stem}: backend must be service/instance")
+            raise ValueError(f"{name}: backend must be service/instance")
         seen.add(hostname)
-        result.append(Route(path.stem, **c))
+        result.append(Route(name, **c))
     return result
 
 
-def select(name=None, root=ROOT):
+def select(name=None, root=None):
     result = routes(root)
     if name:
         result = [r for r in result if r.name == name]
@@ -78,11 +73,11 @@ def select(name=None, root=ROOT):
     return result
 
 
-def hostnames_for(backend, root=ROOT):
+def hostnames_for(backend, root=None):
     return sorted(r.hostname for r in routes(root) if r.backend == backend)
 
 
-def origins_for_service(service, root=ROOT):
+def origins_for_service(service, root=None):
     return sorted({"https://" + r.hostname for r in routes(root)
                    if r.backend.split("/")[0] == service})
 

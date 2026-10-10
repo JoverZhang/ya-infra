@@ -19,7 +19,8 @@ import urllib.request
 SERVICE = Path(__file__).resolve().parent
 ROOT = SERVICE.parents[1]
 sys.path.insert(0, str(ROOT))
-from gateway.model import hostnames_for, read_toml
+from gateway.model import hostnames_for
+from infra_config import section
 
 ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
 NAME = "infra-paseo-web-main"
@@ -52,7 +53,7 @@ def label_args():
 
 
 def config():
-    result = read_toml(SERVICE / "config.toml")
+    result = section("services", "paseo-web")
     if set(result) != {"port", "base_image", "image_ref"}:
         raise ValueError("paseo-web requires port, base_image and image_ref")
     if type(result["port"]) is not int or not 1024 <= result["port"] <= 65535:
@@ -77,7 +78,7 @@ def health(c, timeout=30):
 
 def build(c):
     subprocess.run([sys.executable, str(ROOT / "services/paseo/prepare-artifacts")], check=True)
-    paseo = read_toml(ROOT / "services/paseo/versions.toml")
+    paseo = section("services", "paseo", "versions")
     cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "infra/paseo"
     artifacts = cache / f"{paseo['paseo_version']}-{paseo['codex_version']}-{paseo['node_version']}-bundle{paseo['artifact_layout']}"
     assets = artifacts / "paseo/node_modules/@getpaseo/server/dist/server/web-ui"

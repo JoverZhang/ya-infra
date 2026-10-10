@@ -2,8 +2,9 @@
 
 This module takes over the existing `cloudflare-tunnel` connector. It keeps the
 same remotely managed tunnel and its Cloudflare-side route configuration.
-`versions.toml` pins the existing cloudflared **2026.7.2** image by digest;
-`config.toml` controls resource limits and the loopback metrics port.
+The invocation directory's `./infra.toml` table `[services.cloudflare-tunnel]`
+pins the existing cloudflared **2026.7.2** image by digest and controls resource
+limits and the loopback metrics port.
 
 ```bash
 cd ~/infra

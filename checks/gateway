@@ -183,13 +183,16 @@ class DeclarationChecks(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        (self.root / "gateway/routes").mkdir(parents=True)
-        (self.root / "gateway/public.toml").write_text("\n".join(f'{k} = "{v}"' for k, v in GATEWAY.items()))
+        self.declarations = {}
         self.write_route("paseo1", ROUTE.hostname)
 
     def write_route(self, name, hostname, backend="paseo/demo"):
-        (self.root / "gateway/routes" / f"{name}.toml").write_text(
-            f'gateway = "public"\nhostname = "{hostname}"\nbackend = "{backend}"\n')
+        self.declarations[name] = {"gateway": "public", "hostname": hostname, "backend": backend}
+        lines = ["[gateway.public]", *(f'{key} = {json.dumps(value)}' for key, value in GATEWAY.items())]
+        for route_name, route in self.declarations.items():
+            lines.extend(["", f"[gateway.routes.{route_name}]",
+                          *(f'{key} = {json.dumps(value)}' for key, value in route.items())])
+        (self.root / "infra.toml").write_text("\n".join(lines) + "\n")
 
     def test_two_hostnames_for_same_backend_are_derived(self):
         self.write_route("paseo2", "paseo2.example.org")

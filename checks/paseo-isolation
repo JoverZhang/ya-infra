@@ -16,8 +16,8 @@ loader = importlib.machinery.SourceFileLoader("paseo_manage", str(ROOT / "servic
 spec = importlib.util.spec_from_loader(loader.name, loader)
 m = importlib.util.module_from_spec(spec)
 loader.exec_module(m)
-INSTANCES = tuple(p.stem for p in sorted((ROOT / "services/paseo/instances").glob("*.toml"))
-                  if m.inspect("container", m.name(p.stem)))
+INSTANCES = tuple(instance for instance in sorted(m.instances())
+                  if m.inspect("container", m.name(instance)))
 
 
 def check(condition, message):

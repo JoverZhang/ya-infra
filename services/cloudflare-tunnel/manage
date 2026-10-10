@@ -11,11 +11,13 @@ import socket
 import subprocess
 import sys
 import time
-import tomllib
 import urllib.error
 import urllib.request
 
 SERVICE = Path(__file__).resolve().parent
+sys.path.insert(0, str(SERVICE.parents[1]))
+from infra_config import section
+
 ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "infra/cloudflare-tunnel"
 STATE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "infra/cloudflare-tunnel"
@@ -53,10 +55,7 @@ def label_args():
 
 
 def settings():
-    with (SERVICE / "versions.toml").open("rb") as f:
-        c = tomllib.load(f)
-    with (SERVICE / "config.toml").open("rb") as f:
-        c.update(tomllib.load(f))
+    c = section("services", "cloudflare-tunnel")
     if not re.fullmatch(r"docker.io/cloudflare/cloudflared@sha256:[0-9a-f]{64}", c["image_ref"]):
         raise ValueError("cloudflared image must be pinned by digest")
     if type(c["metrics_port"]) is not int or not 1024 <= c["metrics_port"] <= 65535:

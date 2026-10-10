@@ -6,11 +6,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import tomllib
+import sys
 
 HERE = Path(__file__).resolve().parent
-with (HERE / "versions.toml").open("rb") as f:
-    v = tomllib.load(f)
+sys.path.insert(0, str(HERE.parents[1]))
+from infra_config import section
+
+v = section("services", "paseo", "versions")
 cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "infra/paseo"
 target = cache / f"{v['paseo_version']}-{v['codex_version']}-{v['node_version']}-bundle{v['artifact_layout']}"
 manifest = target / "manifest.json"

@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 SERVICE = Path(__file__).resolve().parent
 sys.path.insert(0, str(SERVICE.parents[1]))
 from gateway.model import IDENTIFIER, hostnames_for, routes
+from infra_config import section
 
 
 def password(instance):
@@ -45,16 +46,15 @@ def runtime_states():
 
 
 def available_targets(instance=None):
-    paths = sorted((SERVICE / "instances").glob("*.toml"))
+    names = sorted(section("services", "paseo", "instances"))
     if instance is not None:
-        if not re.fullmatch(IDENTIFIER, instance) or not any(path.stem == instance for path in paths):
+        if not re.fullmatch(IDENTIFIER, instance) or instance not in names:
             raise ValueError("未知 Paseo 环境；运行 just svc paseo pair --list 查看环境")
-        paths = [path for path in paths if path.stem == instance]
+        names = [instance]
     declared = routes()
     states = runtime_states()
     targets, unavailable = [], []
-    for path in paths:
-        name = path.stem
+    for name in names:
         if not re.fullmatch(IDENTIFIER, name):
             unavailable.append((name, "环境名称无效"))
             continue
@@ -110,7 +110,7 @@ def choose_target(targets):
 def pairing_link(instance, hostname=None):
     if not re.fullmatch(IDENTIFIER, instance):
         raise ValueError("Use a valid Paseo instance name")
-    if not (SERVICE / "instances" / (instance + ".toml")).is_file():
+    if instance not in section("services", "paseo", "instances"):
         raise ValueError("Unknown Paseo instance: " + instance)
     hosts = hostnames_for("paseo/" + instance)
     if hostname:

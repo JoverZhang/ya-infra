@@ -5,6 +5,11 @@ The image is shared; the home, workspace, authentication cache, password, networ
 and listening port are separate. The host's existing Paseo at port 6767 is not
 managed by these commands.
 
+Deployment settings live in the invocation directory's single `./infra.toml`:
+`[services.paseo.versions]` pins programs and images, and
+`[services.paseo.instances.<name>]` defines each environment. Run commands from
+that directory, including when using an external justfile with `just -f`.
+
 ## Deployment
 
 ```bash
@@ -69,10 +74,11 @@ explains token-refresh conflicts and why refreshed caches must be persisted.
 
 ## Add a family instance
 
-Copy `examples/family.toml.example` to `instances/<name>.toml` and choose an unused
-port. Names use lowercase letters, digits and single hyphens. For example:
+Add an instance table to `./infra.toml` and choose an unused port. Names use
+lowercase letters, digits and single hyphens. For example:
 
 ```toml
+[services.paseo.instances.family]
 port = 16772
 cpus = 2
 memory = "4g"
@@ -83,9 +89,10 @@ Then run `just svc paseo deploy <name>` and `just svc paseo login <name>`. The t
 are `infra-paseo-<name>-home` and `infra-paseo-<name>-workspace`. Browser files live
 under `/workspace`; local Paseo and Codex sessions live under `/home/paseo`.
 
-For public access, add a separate `gateway/routes/paseo2.toml`:
+For public access, add a Route table in the same file:
 
 ```toml
+[gateway.routes.paseo2]
 gateway = "public"
 hostname = "paseo2.example.com"
 backend = "paseo/family"
@@ -93,7 +100,7 @@ backend = "paseo/family"
 
 Then run `just gateway plan paseo2` and `just gateway apply paseo2`. Hostnames are
 owned by Route declarations; deployment derives `PASEO_HOSTNAMES` from every
-Route for that instance. Port and resource settings remain in the backend module.
+Route for that instance. Its port and resource settings live in the instance table.
 The shared gateway credential is reused for future family instances.
 
 ## Runtime isolation
@@ -133,7 +140,7 @@ yet been exercised. `smoke` uses the logged-in Codex account through Paseo and
 verifies a real workspace file; it consumes a small model turn and removes its
 temporary file afterwards.
 
-`versions.toml` records all program versions and the base digest. Build a new explicitly
+`[services.paseo.versions]` records all program versions and the base digest. Build a new explicitly
 named image and deploy it to `demo` first. Set an instance's optional `image_ref`
 to keep or select a particular image version. Deploy the other instances after
 validation. Rebuilding/replacing a container never deletes its data volumes.

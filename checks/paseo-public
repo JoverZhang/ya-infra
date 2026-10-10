@@ -43,7 +43,7 @@ def main(instance, hostname=None):
             raise ValueError("Declare one gateway route or select --hostname explicitly")
         hostname = c["hostnames"][0]
     if hostname not in c["hostnames"]:
-        raise ValueError("Hostname is not declared for this backend in gateway/routes")
+        raise ValueError("Hostname is not declared for this backend in infra.toml gateway.routes")
     password = m.password_file(instance).read_text().strip()
     for path, credential, expected, label in [
         ("/", None, 200, "web UI"),

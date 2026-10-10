@@ -36,7 +36,7 @@ def main():
     if args.command == "legacy-publish":
         matches = [r for r in model.routes() if r.backend == "paseo/" + str(args.route) and r.hostname == args.hostname]
         if len(matches) != 1:
-            raise ValueError("Declare the hostname/backend in gateway/routes, then run 'just gateway apply <route>'")
+            raise ValueError("Declare the hostname/backend in infra.toml [gateway.routes.<route>], then run 'just gateway apply <route>'")
         args.command, args.route, args.hostname = "apply", matches[0].name, None
     if args.hostname:
         parser.error("extra hostname is only accepted by the legacy forwarding command")

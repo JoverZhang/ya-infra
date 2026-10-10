@@ -1,2 +1,0 @@
-cloudflared_version = "2026.7.2"
-image_ref = "docker.io/cloudflare/cloudflared@sha256:18626b1baac4450214535cd5bc40ef44c0635244d585ebf707749c22b6f3408f"
