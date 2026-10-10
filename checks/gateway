@@ -268,6 +268,7 @@ class CredentialDiagnosticsChecks(unittest.TestCase):
                 patch.object(manage, "STATE", Path(directory)), \
                 patch.object(manage, "Client", return_value=Mock()), \
                 patch.object(manage, "Controller", return_value=controller), \
+                patch.object(manage.model, "public", return_value=GATEWAY), \
                 patch.object(manage.model, "select", return_value=[web, ROUTE]), \
                 patch.object(manage.model, "endpoint", return_value=ENDPOINT), \
                 patch.object(sys, "argv", ["gateway/manage", "apply"]), redirect_stdout(io.StringIO()):
@@ -347,6 +348,8 @@ class CredentialDiagnosticsChecks(unittest.TestCase):
         client.configuration.side_effect = RuntimeError("HTTP 401, error codes [10000]")
         output = io.StringIO()
         with patch.object(manage, "Client", return_value=client), \
+                patch.object(manage.model, "public", return_value=GATEWAY), \
+                patch.object(manage.model, "select", return_value=[ROUTE]), \
                 patch.object(sys, "argv", ["gateway/manage", "check-credentials"]), redirect_stdout(output):
             with self.assertRaises(RuntimeError):
                 manage.main()
