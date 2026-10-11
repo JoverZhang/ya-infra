@@ -12,6 +12,14 @@ Home/workspace volumes persist across container replacement. Instance names
 select those volumes, so renaming an instance creates a different environment.
 For public access, add its [Route](../../gateway/README.md#routes).
 
+`just svc paseo volumes <name>` checks the mounts and records volume identity in
+user-level runtime state without restarting the instance. Deploy/restart refuse
+missing or recreated volumes; only a new environment gets empty volumes.
+Keep this identity record when moving the deployment. These guards do not prevent
+direct Podman deletion or deletion of files by an agent: export both volumes with
+`podman volume export` while stopped, keep archives private (home includes login
+credentials), and retain a copy outside the host.
+
 ## Image upgrades
 
 1. Prepare matching installed Node, Paseo and complete standalone Codex
@@ -20,7 +28,7 @@ For public access, add its [Route](../../gateway/README.md#routes).
    distributions or an existing verified cache.
 2. Update the version pins and assign new backend/shared-UI image tags. Pin
    other instances' `image_ref` to their old backend image during the trial.
-3. Back up the selected home/workspace volumes while stopped. Build both images,
+3. Back up the selected instance as above. Build both images,
    deploy `demo` and the shared UI following its [client policy](../paseo-web/README.md#frontend-upgrades),
    then run the relevant [checks](../../checks/README.md).
    The shared frontend is global: check its compatibility with still-old backends

@@ -4,6 +4,8 @@ Use the smallest check set that exercises the changed interface. Start with
 `python3 checks/cli` for command/configuration changes and `python3 checks/gateway`
 for routing/controller changes; both use isolated fixtures without live deployments
 or cloud writes.
+For backend storage/lifecycle changes, run `python3 checks/paseo-storage` for
+offline checks of missing-volume, replacement and adoption safeguards.
 
 ## Runtime effects
 

@@ -129,7 +129,62 @@ def prepare_password(instance):
     return value
 
 
+def ensure_volumes(instance, current=None, create=False):
+    """Remember volume identity; never silently replace an established environment."""
+    expected = volumes(instance)
+    if current:
+        owned(current, instance)
+        mounts = current.get("Mounts", [])
+        actual = {m.get("Name"): m.get("Destination") for m in mounts if m.get("Type") == "volume"}
+        if actual != expected or len(mounts) != len(expected):
+            raise RuntimeError(f"{instance}: container data mounts differ from its named volumes")
+    record = STATE / f"{instance}.volumes.json"
+    try:
+        recorded = json.loads(record.read_text())
+    except FileNotFoundError:
+        recorded = None
+    else:
+        if not isinstance(recorded, dict) or set(recorded) != set(expected) or any(not isinstance(v, str) or not v for v in recorded.values()):
+            raise RuntimeError(f"{instance}: invalid volume identity record: {record}")
+    data = {volume: inspect("volume", volume) for volume in expected}
+    missing = [volume for volume, value in data.items() if value is None]
+    for value in data.values():
+        if value is not None:
+            owned(value, instance)
+    if missing:
+        if recorded is not None or current or len(missing) != len(expected) or not create or password_file(instance).exists():
+            raise RuntimeError(f"{instance}: missing data volumes: {', '.join(missing)}; restore the data instead of creating empty replacements")
+        for volume in expected:
+            engine("volume", "create", *label_args(instance), volume, capture=True)
+            data[volume] = inspect("volume", volume)
+            if data[volume] is None:
+                raise RuntimeError(f"{instance}: newly created volume is unavailable: {volume}")
+            owned(data[volume], instance)
+    identities = {}
+    for volume, value in data.items():
+        if value.get("Name") != volume or not isinstance(value.get("CreatedAt"), str) or not value["CreatedAt"] or value.get("Driver") != "local":
+            raise RuntimeError(f"{instance}: cannot establish local volume identity: {volume}")
+        identities[volume] = value["CreatedAt"]
+    if recorded is not None:
+        if recorded != identities:
+            raise RuntimeError(f"{instance}: data volume identity changed; restore or reconcile the original volumes with {record}")
+    else:
+        private_directory(STATE)
+        with tempfile.NamedTemporaryFile("w", dir=STATE, prefix=".volumes-", delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                json.dump(identities, stream, indent=2)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+                os.replace(temporary, record)
+            finally:
+                temporary.unlink(missing_ok=True)
+    return data
+
+
 def resource_setup(instance, c):
+    ensure_volumes(instance)
     network = name(instance) + "-net"
     data = inspect("network", network)
     if data:
@@ -140,12 +195,6 @@ def resource_setup(instance, c):
         routes = [x for cidr in PRIVATE_ROUTES for x in ("--route", cidr + ",blackhole")]
         # These routes are inside the container. Runtime has no NET_ADMIN capability.
         engine("network", "create", *label_args(instance), "--opt", "isolate=strict", *routes, network, capture=True)
-    for volume in volumes(instance):
-        data = inspect("volume", volume)
-        if data:
-            owned(data, instance)
-        else:
-            engine("volume", "create", *label_args(instance), volume, capture=True)
     mounts = [x for volume, target in volumes(instance).items() for x in ("-v", volume + ":" + target)]
     engine("run", "--rm", "--pull=never", "--network=none", "--http-proxy=false", "--user=0:0",
            "--cap-drop=all", "--cap-add=CHOWN", "--cap-add=DAC_OVERRIDE", "--cap-add=FOWNER",
@@ -172,10 +221,11 @@ def deploy(instance):
     image = inspect("image", c["image_ref"])
     if not image:
         raise RuntimeError("Pinned image missing. Run 'just svc paseo build' first")
+    current = inspect("container", name(instance))
+    ensure_volumes(instance, current, create=True)
     secret = prepare_password(instance)
     spec = hashlib.sha256(json.dumps({"config": c, "image": image["Id"], "password": secret,
                                      "implementation": Path(__file__).read_text()}, sort_keys=True).encode()).hexdigest()
-    current = inspect("container", name(instance))
     if current:
         owned(current, instance)
         if current["Config"]["Labels"].get("infra.spec") == spec:
@@ -279,7 +329,7 @@ def main():
         result = subprocess.run([sys.executable, str(SERVICE / "pair"), *sys.argv[2:]])
         sys.exit(result.returncode)
     parser = argparse.ArgumentParser(prog="just svc paseo", description=__doc__)
-    parser.add_argument("command", nargs="?", choices=["build", "deploy", "status", "logs", "stop", "restart", "login", "auth-status", "device-login", "verify", "smoke", "endpoint", "verify-public", "pair"])
+    parser.add_argument("command", nargs="?", choices=["build", "deploy", "status", "volumes", "logs", "stop", "restart", "login", "auth-status", "device-login", "verify", "smoke", "endpoint", "verify-public", "pair"])
     parser.add_argument("instance", nargs="?")
     parser.add_argument("--hostname")
     args = parser.parse_args()
@@ -317,10 +367,18 @@ def main():
         if args.command == "deploy":
             deploy(args.instance)
             return
-        require_container(args.instance)
+        if args.command == "volumes":
+            data = ensure_volumes(args.instance, inspect("container", name(args.instance)))
+            for volume, target in volumes(args.instance).items():
+                print(f"{volume} -> {target} ({data[volume]['Mountpoint']})")
+            print(f"Identity record: {STATE / (args.instance + '.volumes.json')}")
+            return
+        current = require_container(args.instance)
         if args.command == "logs":
             engine("logs", "--tail=100", name(args.instance))
         elif args.command in ("stop", "restart"):
+            if args.command == "restart":
+                ensure_volumes(args.instance, current)
             engine(args.command, name(args.instance))
             if args.command == "restart":
                 health(args.instance, config(args.instance))
