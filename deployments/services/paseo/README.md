@@ -3,7 +3,7 @@
 ## Instances
 
 Add `[services.paseo.instances.<name>]` to the invocation configuration, using
-`infra.example.toml` for its shape and an unused loopback port. Deploy and run
+`config.example.toml` for its shape and an unused loopback port. Deploy and run
 `login <name>` separately for every instance, even when sharing one ChatGPT
 account: each home needs its own refreshable login session; cloning a live
 authentication cache creates refresh conflicts. Account usage remains shared.

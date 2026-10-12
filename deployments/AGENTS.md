@@ -1,7 +1,7 @@
 # Agent entry
 
 Read [README.md](README.md) once, then load only the documents relevant to the
-current task. Code, `infra.example.toml` and module `--help` own field schemas,
+current task. Code, `config.example.toml` and module `--help` own field schemas,
 argument lists and live values.
 
 | Task | Read |

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise the public Just interface with isolated service and credential fixtures."""
+"""Exercise both Just entry points with isolated service and credential fixtures.
+
+Failures covered: wrong invocation directory, fallback to old/parent config,
+lost arguments or exit codes, shell execution, and credentials in diagnostics.
+"""
 import json
 import os
 from pathlib import Path
@@ -16,15 +20,20 @@ PASSWORDS = {"family-a": "fixture-family-a-password-0123456789",
 
 
 class CommandChecks(unittest.TestCase):
+    root_proxy = False
+
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix="infra-cli-check-")
+        self.directory = tempfile.TemporaryDirectory(prefix="infra cli's check-")
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+        self.deployment = self.root / "deployments" if self.root_proxy else self.root
         for name in ("justfile", "bin/svc", "services/paseo/manage", "services/paseo/pair",
                      "services/paseo-web/manage", "gateway/model.py", "infra_config.py"):
-            target = self.root / name
+            target = self.deployment / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, target)
+        if self.root_proxy:
+            shutil.copy2(ROOT.parent / "justfile", self.root / "justfile")
         self.config = self.root / "private"
         self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.config)}
         self.gateway = {"provider": "cloudflare-tunnel", "zone": "example.test", "account_id": "a" * 32,
@@ -40,10 +49,10 @@ class CommandChecks(unittest.TestCase):
             secret.parent.mkdir(parents=True)
             secret.write_text(password + "\n")
             secret.chmod(0o600)
-        echoer = self.root / "services/echoer/manage"
+        echoer = self.deployment / "services/echoer/manage"
         echoer.parent.mkdir(parents=True)
         echoer.write_text('"""Record arguments without interpreting them."""\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
-        (self.root / "gateway/manage").write_text('import json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        (self.deployment / "gateway/manage").write_text('import json, sys\nprint(json.dumps(sys.argv[1:]))\n')
         engine = self.root / "fixtures/podman"
         engine.parent.mkdir()
         engine.write_text('#!/usr/bin/env python3\nimport json, os, sys\n'
@@ -69,7 +78,7 @@ class CommandChecks(unittest.TestCase):
                           *(f'{key} = {json.dumps(value)}' for key, value in settings.items())])
         lines.extend(["", "[services.paseo-web]",
                       *(f'{key} = {json.dumps(value)}' for key, value in self.web.items())])
-        (directory or self.root).joinpath("infra.toml").write_text("\n".join(lines) + "\n")
+        (directory or self.root).joinpath("config.toml").write_text("\n".join(lines) + "\n")
 
     def run_cli(self, *args, answers=None, cwd=None):
         command = ["just", "-f", str(self.root / "justfile"), *args]
@@ -120,8 +129,10 @@ class CommandChecks(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), ["capture", *values])
         self.assertFalse(marker.exists())
-        result = self.run_cli("gateway", "plan", "route-one")
-        self.assertEqual(json.loads(result.stdout), ["plan", "route-one"])
+        result = self.run_cli("gateway", "plan", "route-one", *values)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ["plan", "route-one", *values])
+        self.assertFalse(marker.exists())
         self.assertEqual(json.loads(self.run_cli("gateway").stdout), ["--help"])
 
     def test_service_help_includes_pairing_environments(self):
@@ -209,7 +220,7 @@ class CommandChecks(unittest.TestCase):
         result = self.run_cli("svc", "paseo", "pair", "family-a", cwd=project)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
-        self.assertIn("infra.toml", result.stderr)
+        self.assertIn("config.toml", result.stderr)
         self.assertIn("Missing", result.stderr)
         for password in PASSWORDS.values():
             self.assertNotIn(password, result.stdout + result.stderr)
@@ -217,13 +228,48 @@ class CommandChecks(unittest.TestCase):
     def test_invalid_project_configuration_has_actionable_error_without_content(self):
         project = self.root / "broken-config"
         project.mkdir()
-        (project / "infra.toml").write_text('[gateway.public]\nzone="private-config-content\n')
+        (project / "config.toml").write_text('[gateway.public]\nzone="private-config-content\n')
         result = self.run_cli("svc", "paseo", "pair", "family-a", cwd=project)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertIn("Invalid TOML", result.stderr)
         self.assertNotIn("private-config-content", result.stderr)
 
+    def test_old_configuration_name_does_not_supply_settings(self):
+        (self.root / "config.toml").rename(self.root / "infra.toml")
+        result = self.run_cli("svc", "paseo", "pair", "family-a")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Missing", result.stderr)
+        self.assertIn("config.toml", result.stderr)
+
+
+class RootProxyChecks(CommandChecks):
+    root_proxy = True
+
+    def test_direct_deployment_entry_uses_its_invocation_configuration(self):
+        self.routes["family-a"]["hostname"] = "nested.example.test"
+        self.write_config(self.deployment)
+        result = self.run_cli("svc", "paseo", "pair", "family-a")
+        self.assert_link(result, "family-a")
+        result = subprocess.run(["just", "svc", "paseo", "pair", "family-a"],
+                                cwd=self.deployment, env=self.env, stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=10)
+        self.assert_link(result, "family-a", "nested.example.test")
+
+    def test_service_and_gateway_failure_exit_codes_are_preserved(self):
+        for script in (self.deployment / "services/echoer/manage", self.deployment / "gateway/manage"):
+            script.write_text('import sys\nprint("fixture failure", file=sys.stderr)\nsys.exit(23)\n')
+        for args in (("svc", "echoer", "fail"), ("gateway", "fail")):
+            result = self.run_cli(*args)
+            self.assertEqual(result.returncode, 23, result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertIn("fixture failure", result.stderr)
+
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    result = unittest.main(verbosity=2, exit=False).result
+    print(json.dumps({"passed": result.wasSuccessful(), "tests": result.testsRun,
+                      "failures": [test.id() for test, _ in result.failures],
+                      "errors": [test.id() for test, _ in result.errors]}))
+    raise SystemExit(0 if result.wasSuccessful() else 1)

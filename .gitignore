@@ -1,1 +1,4 @@
 /.worktrees/
+/.infra/
+config.toml
+infra.toml

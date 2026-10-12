@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compatibility entry point. Hostnames are declared in ./infra.toml gateway.routes.
+# Compatibility entry point. Hostnames are declared in ./config.toml gateway.routes.
 set -euo pipefail
 if [[ $# -ne 2 ]]; then
   printf 'Usage: %s INSTANCE HOSTNAME\n' "$0" >&2

@@ -6,15 +6,23 @@ outside the managed scope.
 
 ## Configure and inspect
 
-Commands read exactly `./infra.toml` in the invocation directory, including when
-using an external justfile. Copy [infra.example.toml](infra.example.toml) there
+Commands read exactly `./config.toml` in the invocation directory, including when
+using an external justfile. Copy [config.example.toml](config.example.toml) there
 and set the deployment values; this repository ignores the actual file.
 
 ```bash
-just -f ~/infra/justfile svc
-just -f ~/infra/justfile svc paseo status
-just -f ~/infra/justfile svc paseo pair --list
+cp deployments/config.example.toml config.toml
+# Edit config.toml before running deployment actions.
+just svc
+just svc paseo status
+just svc paseo pair --list
 ```
+
+These examples run from the repository root. The root justfile forwards to this
+module; running here directly or using `just -f /path/to/ya-infra/justfile ...`
+also keeps the invocation directory. When adopting an existing deployment, copy
+its private `infra.toml` to `config.toml` in that directory and keep its instance
+names and user-level credentials/state intact.
 
 The public interface is `just svc <module> <action> ...` and
 `just gateway <action> ...`; module help supplies the available actions.

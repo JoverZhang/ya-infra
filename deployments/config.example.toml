@@ -1,4 +1,4 @@
-# Copy to ./infra.toml in the directory where you run commands.
+# Copy to ./config.toml in the directory where you run commands.
 # Replace the gateway identifiers and route hostnames before publishing.
 
 [gateway.public]
