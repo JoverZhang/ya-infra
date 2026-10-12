@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Freeze installed public program files, never user configuration or credentials."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1]))
+from infra_config import section
+
+v = section("services", "paseo", "versions")
+cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "infra/paseo"
+target = cache / f"{v['paseo_version']}-{v['codex_version']}-{v['node_version']}-bundle{v['artifact_layout']}"
+manifest = target / "manifest.json"
+
+
+def hashes(root):
+    result = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file() and p != root / "manifest.json":
+            with p.open("rb") as stream:
+                result[str(p.relative_to(root))] = hashlib.file_digest(stream, "sha256").hexdigest()
+    return result
+
+
+if manifest.is_file():
+    expected = json.loads(manifest.read_text())
+    if hashes(target) != expected["sha256"]:
+        raise RuntimeError("Software artifact snapshot failed checksum verification")
+    print("Verified cached program snapshot:", target)
+else:
+    node = Path(shutil.which("node")).resolve()
+    cli = Path(shutil.which("paseo")).resolve().parent.parent
+    codex = Path(shutil.which("codex")).resolve()
+    codex_dist = codex.parent.parent
+    if not (codex_dist / "bin/codex-code-mode-host").is_file():
+        raise RuntimeError("Installed Codex distribution is missing its execution helper")
+    if not (codex_dist / "codex-package.json").is_file():
+        raise RuntimeError("Expected a standalone Codex program distribution")
+    if json.loads((cli / "package.json").read_text())["version"] != v["paseo_version"]:
+        raise RuntimeError("Installed Paseo version differs from the pinned artifact version")
+    if subprocess.check_output([str(node), "--version"], text=True).strip() != "v" + v["node_version"]:
+        raise RuntimeError("Installed Node version differs from the pinned artifact version")
+    if subprocess.check_output([str(codex), "--version"], text=True).strip() != "codex-cli " + v["codex_version"]:
+        raise RuntimeError("Installed Codex version differs from the pinned artifact version")
+    for root in (cli, codex_dist):
+        for p in root.rglob("*"):
+            if p.is_symlink() and not p.resolve().is_relative_to(root):
+                raise RuntimeError("Software package has an external symlink; refusing to include host files")
+    target.mkdir(parents=True, mode=0o700)
+    shutil.copy2(node, target / "node")
+    def exclude_config(directory, names):
+        return [x for x in names if x in ("auth.json", ".npmrc") or x.startswith(".env")]
+    shutil.copytree(cli, target / "paseo", symlinks=True, ignore=exclude_config)
+    shutil.copytree(codex_dist, target / "codex-dist", symlinks=True, ignore=exclude_config)
+    manifest.write_text(json.dumps({"versions": v, "sha256": hashes(target)}, indent=2) + "\n")
+    print("Prepared pinned program snapshot:", target)

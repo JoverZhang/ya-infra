@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Manage declarative gateway routes: preview, apply, status and public checks."""
+import argparse
+import fcntl
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from gateway import model
+from gateway.cloudflare import Client, MissingCredentials, credentials_file
+from gateway.controller import Controller, State, healthy
+from gateway.diagnostics import check_credentials
+
+STATE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "infra/gateway/public"
+
+
+def describe(route, endpoint):
+    print(f"{route.name}: https://{route.hostname} -> {route.backend} -> {endpoint['url']}")
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="just gateway", description=__doc__)
+    parser.add_argument("command", choices=["plan", "apply", "status", "verify", "setup", "check-credentials", "legacy-publish"])
+    parser.add_argument("route", nargs="?")
+    parser.add_argument("hostname", nargs="?")
+    args = parser.parse_args()
+    os.umask(0o077)
+    if args.command == "setup":
+        if args.route or args.hostname:
+            parser.error("setup configures the shared public gateway once")
+        subprocess.run(["bash", str(ROOT / "gateway/setup-wizard.sh")], check=True)
+        return
+    if args.command == "legacy-publish":
+        matches = [r for r in model.routes() if r.backend == "paseo/" + str(args.route) and r.hostname == args.hostname]
+        if len(matches) != 1:
+            raise ValueError("Declare the hostname/backend in infra.toml [gateway.routes.<route>], then run 'just gateway apply <route>'")
+        args.command, args.route, args.hostname = "apply", matches[0].name, None
+    if args.hostname:
+        parser.error("extra hostname is only accepted by the legacy forwarding command")
+    selected = model.select(args.route)
+    config = model.public()
+    state = State(STATE)
+    try:
+        client = Client(config)
+    except MissingCredentials as e:
+        if args.command not in ("plan", "status", "verify"):
+            raise
+        client = None
+        missing = str(e)
+    controller = Controller(client, state)
+    if args.command == "check-credentials":
+        check_credentials(client, selected)
+        return
+    if args.command in ("apply", "verify"):
+        # The shared UI's public check exercises its declared environments.
+        selected.sort(key=lambda route: route.backend.startswith("paseo-web/"))
+        STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+        STATE.chmod(0o700)
+        with (STATE / "manage.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for route in selected:
+                describe(route, model.endpoint(route))
+                if args.command == "apply":
+                    controller.apply(route)
+                else:
+                    controller.verify(route)
+                print(f"{route.name}: public checks passed")
+        return
+    for route in selected:
+        endpoint = model.endpoint(route)
+        describe(route, endpoint)
+        if args.command == "status":
+            entry = state.read().get(route.hostname, {})
+            print("  backend:", "healthy" if healthy(endpoint) else "unavailable")
+            print("  last publication:", entry.get("phase", "not recorded"))
+            if entry.get("verified_at"):
+                print("  last public check:", entry["verified_at"])
+        if client:
+            plan = controller.plan(route)
+            print("  Tunnel ingress:", "upsert exact hostname" if plan["ingress_change"] else "unchanged")
+            print("  DNS:", "create proxied CNAME" if plan["dns_create"] else "unchanged")
+            print("  CNAME target:", plan["target"])
+        else:
+            print("  desired DNS: proxied CNAME -> " + config["tunnel_id"] + ".cfargotunnel.com")
+            print("  remote state: unknown (management credential missing)")
+    if not client:
+        print(missing)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, RuntimeError, FileNotFoundError, subprocess.CalledProcessError) as e:
+        # Cloud credentials never enter process arguments or printed request bodies.
+        print("error: " + str(e), file=sys.stderr)
+        sys.exit(1)
