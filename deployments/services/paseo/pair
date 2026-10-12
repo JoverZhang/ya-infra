@@ -20,12 +20,12 @@ def password(instance):
     config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
     password_file = config / "infra/paseo" / instance / "password"
     if not password_file.is_file():
-        raise ValueError("缺少密码文件；请先部署该环境")
+        raise ValueError("Missing password file; deploy this instance first")
     if stat.S_IMODE(password_file.stat().st_mode) & 0o077:
-        raise ValueError("密码文件需要私有权限 0600")
+        raise ValueError("Password file must have private permissions (0600)")
     value = password_file.read_text().strip()
     if len(value) < 24 or not re.fullmatch(r"[a-zA-Z0-9_-]+", value):
-        raise ValueError("密码文件格式无效")
+        raise ValueError("Invalid password file format")
     return value
 
 
@@ -37,9 +37,9 @@ def runtime_states():
                                 "--filter", f"label=infra.owner={os.getuid()}", "--format", "json"],
                                 capture_output=True, text=True, timeout=5, check=True)
         containers = json.loads(result.stdout)
-        labels = {"running": "运行中", "exited": "已停止", "stopped": "已停止",
-                  "created": "已创建", "paused": "已暂停"}
-        return {item["Labels"]["infra.instance"]: labels.get(item.get("State"), "状态未知")
+        labels = {"running": "running", "exited": "stopped", "stopped": "stopped",
+                  "created": "created", "paused": "paused"}
+        return {item["Labels"]["infra.instance"]: labels.get(item.get("State"), "unknown")
                 for item in containers if item.get("Labels", {}).get("infra.instance")}
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         return None
@@ -49,18 +49,18 @@ def available_targets(instance=None):
     names = sorted(section("services", "paseo", "instances"))
     if instance is not None:
         if not re.fullmatch(IDENTIFIER, instance) or instance not in names:
-            raise ValueError("未知 Paseo 环境；运行 just svc paseo pair --list 查看环境")
+            raise ValueError("Unknown Paseo instance; run 'just svc paseo pair --list' to list instances")
         names = [instance]
     declared = routes()
     states = runtime_states()
     targets, unavailable = [], []
     for name in names:
         if not re.fullmatch(IDENTIFIER, name):
-            unavailable.append((name, "环境名称无效"))
+            unavailable.append((name, "Invalid instance name"))
             continue
         hosts = sorted(route.hostname for route in declared if route.backend == "paseo/" + name)
         if not hosts:
-            unavailable.append((name, "缺少公网 Route"))
+            unavailable.append((name, "Missing public Route"))
             continue
         try:
             password(name)
@@ -68,32 +68,32 @@ def available_targets(instance=None):
             unavailable.append((name, str(error)))
             continue
         except OSError:
-            unavailable.append((name, "密码文件不可读"))
+            unavailable.append((name, "Unreadable password file"))
             continue
-        state = states.get(name, "未部署") if states is not None else "状态未知"
+        state = states.get(name, "not deployed") if states is not None else "unknown"
         targets.extend({"instance": name, "hostname": host, "state": state} for host in hosts)
     return targets, unavailable
 
 
 def show_targets(targets, unavailable, stream):
-    print("可生成直连连接串的 Paseo 环境：", file=stream)
+    print("Paseo instances available for direct connection:", file=stream)
     for number, target in enumerate(targets, 1):
         print(f"  {number}) {target['instance']:16} {target['hostname']:30} {target['state']}", file=stream)
     if not targets:
-        print("  暂无可直连环境", file=stream)
+        print("  No instances available for direct connection", file=stream)
     if unavailable:
-        print("\n尚不能生成连接串：", file=stream)
+        print("\nUnavailable instances:", file=stream)
         for name, reason in unavailable:
             print(f"  {name}: {reason}", file=stream)
 
 
 def choose_target(targets):
     while True:
-        default = " [Enter 选择唯一环境]" if len(targets) == 1 else ""
-        print(f"\n选择编号或环境名{default}（q 取消）：", end="", file=sys.stderr, flush=True)
+        default = " [Enter selects the only instance]" if len(targets) == 1 else ""
+        print(f"\nSelect a number or instance name{default} (q to cancel):", end="", file=sys.stderr, flush=True)
         answer = sys.stdin.readline()
         if not answer or answer.strip().lower() in ("q", "quit"):
-            print("已取消", file=sys.stderr)
+            print("Cancelled", file=sys.stderr)
             return None
         answer = answer.strip()
         if not answer and len(targets) == 1:
@@ -103,7 +103,7 @@ def choose_target(targets):
         matched = [target for target in targets if target["instance"] == answer]
         if len(matched) == 1:
             return matched[0]
-        message = "该环境有多个域名，请选择编号" if matched else "请输入菜单中的编号或环境名"
+        message = "This instance has multiple hostnames; select a number" if matched else "Enter a number or instance name from the menu"
         print(message, file=sys.stderr)
 
 
@@ -125,13 +125,13 @@ def pairing_link(instance, hostname=None):
 
 def main():
     parser = argparse.ArgumentParser(prog="just svc paseo pair", description=__doc__,
-        epilog="在 Web 的 Direct connection → Advanced → Connection URI 中粘贴，按 Enter 后选择 Connect。")
-    parser.add_argument("instance", nargs="?", help="环境名；省略则选择环境")
-    parser.add_argument("--hostname", help="选择该环境的一个已声明公网域名")
-    parser.add_argument("--list", action="store_true", help="只列环境信息，不输出密码或连接串")
+        epilog="Paste into Direct connection → Advanced → Connection URI in the web UI; press Enter, then select Connect.")
+    parser.add_argument("instance", nargs="?", help="Instance name; omit to select interactively")
+    parser.add_argument("--hostname", help="Select a declared public hostname for this instance")
+    parser.add_argument("--list", action="store_true", help="List instances without passwords or connection URIs")
     args = parser.parse_args()
     if args.hostname and not args.instance:
-        parser.error("--hostname 需要指定环境名")
+        parser.error("--hostname requires an instance name")
     if args.instance and not args.list:
         if args.hostname or len(hostnames_for("paseo/" + args.instance)) == 1:
             print(pairing_link(args.instance, args.hostname))
@@ -140,15 +140,15 @@ def main():
     if args.hostname:
         targets = [target for target in targets if target["hostname"] == args.hostname]
         if not targets:
-            raise ValueError("该域名不是此环境的可直连公网域名")
+            raise ValueError("Hostname is not a declared public hostname for this instance")
     show_targets(targets, unavailable, sys.stdout if args.list else sys.stderr)
     if args.list:
         return 0
     if not targets:
-        print("请先配置公网 Route 并部署环境。用法：just svc paseo deploy <环境>", file=sys.stderr)
+        print("Configure a public Route and deploy an instance first. Usage: just svc paseo deploy <instance>", file=sys.stderr)
         return 2
     if not sys.stdin.isatty():
-        print("非交互运行请指定环境：just svc paseo pair <环境> [--hostname <域名>]", file=sys.stderr)
+        print("Non-interactive use requires an instance: just svc paseo pair <instance> [--hostname <hostname>]", file=sys.stderr)
         return 2
     target = choose_target(targets)
     if target is not None:
@@ -163,5 +163,5 @@ if __name__ == "__main__":
         print("error: " + str(error), file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\n已取消", file=sys.stderr)
+        print("\nCancelled", file=sys.stderr)
         sys.exit(130)

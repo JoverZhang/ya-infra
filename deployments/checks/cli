@@ -154,7 +154,7 @@ class CommandChecks(unittest.TestCase):
         self.route("no-password", "missing.example.test", "no-password")
         result = self.run_cli("svc", "paseo", "pair", "--list")
         self.assertEqual(result.returncode, 0, result.stderr)
-        for message in ("运行中", "已停止", "缺少公网 Route", "缺少密码文件"):
+        for message in ("running", "stopped", "Missing public Route", "Missing password file"):
             self.assertIn(message, result.stdout)
         for password in PASSWORDS.values():
             self.assertNotIn(password, result.stdout + result.stderr)
@@ -163,19 +163,19 @@ class CommandChecks(unittest.TestCase):
         result = self.run_cli("svc", "paseo", "pair")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
-        self.assertIn("非交互运行请指定环境", result.stderr)
+        self.assertIn("Non-interactive use requires an instance", result.stderr)
 
     def test_multiple_targets_require_choice_and_allow_name(self):
         result = self.run_cli("svc", "paseo", "pair", answers="\ninvalid\nfamily-b\n")
         self.assert_link(result, "family-b")
-        self.assertIn("请输入菜单中的编号或环境名", result.stderr)
+        self.assertIn("Enter a number or instance name from the menu", result.stderr)
 
     def test_single_target_has_enter_default_and_cancel_has_no_link(self):
         del self.instances["family-b"]
         self.write_config()
         result = self.run_cli("svc", "paseo", "pair", answers="\n")
         self.assert_link(result, "family-a")
-        self.assertIn("Enter 选择唯一环境", result.stderr)
+        self.assertIn("Enter selects the only instance", result.stderr)
         result = self.run_cli("svc", "paseo", "pair", answers="q\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
@@ -184,7 +184,7 @@ class CommandChecks(unittest.TestCase):
         self.route("alias", "alias.example.test", "family-a")
         result = self.run_cli("svc", "paseo", "pair", "family-a", answers="family-a\n2\n")
         self.assert_link(result, "family-a", "family-a.example.test")
-        self.assertIn("多个域名", result.stderr)
+        self.assertIn("multiple hostnames", result.stderr)
         result = self.run_cli("svc", "paseo", "pair", "family-a", "--hostname", "alias.example.test")
         self.assert_link(result, "family-a", "alias.example.test")
 
@@ -192,7 +192,7 @@ class CommandChecks(unittest.TestCase):
         self.env["INFRA_TEST_ENGINE_FAILED"] = "1"
         result = self.run_cli("svc", "paseo", "pair", "--list")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("状态未知", result.stdout)
+        self.assertIn("unknown", result.stdout)
         self.assertNotIn("private-provider-error", result.stdout + result.stderr)
 
     def test_external_justfile_reads_configuration_from_invocation_directory(self):

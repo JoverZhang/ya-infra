@@ -189,18 +189,18 @@ TOTAL_STAGES=2
 INSTANCE="${1:?Usage: login-wizard.sh INSTANCE}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-banner "Paseo ${INSTANCE} — Codex 账号登录"
+banner "Paseo ${INSTANCE} — Codex account login"
 
-stage "为这个实例创建独立登录会话"
-say "请登录你自己的同一个 ChatGPT 账号；每个实例分别完成一次。"
-say "认证文件由 Codex 保存到该实例的 /home/paseo/.codex/auth.json。"
-step "在接下来 Codex 输出的网址输入一次性设备码，完成登录。"
-step "无需复制 Token，也无需修改宿主机现有的 Codex 登录。"
+stage "Create an independent login session for this instance"
+say "Sign in with the same ChatGPT account separately for each instance."
+say "Codex saves authentication to /home/paseo/.codex/auth.json inside this instance."
+step "Open the URL shown by Codex and enter the one-time device code to complete login."
+step "You do not need to copy a token or change the host's existing Codex login."
 open_url "https://auth.openai.com/codex/device"
 python3 "$SCRIPT_DIR/manage" device-login "$INSTANCE"
 
-stage "检查实例认证状态"
+stage "Check this instance's authentication status"
 python3 "$SCRIPT_DIR/manage" auth-status "$INSTANCE"
-note "以后重新部署会保留此实例的登录缓存。"
+note "This instance's login cache persists across redeployments."
 
 finish

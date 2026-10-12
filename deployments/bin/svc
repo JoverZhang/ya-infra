@@ -17,16 +17,16 @@ def services():
 
 
 def help_text(modules):
-    lines = ["用法：just svc <服务> <动作> [环境] [选项]", "", "可用服务："]
+    lines = ["Usage: just svc <service> <action> [instance] [options]", "", "Available services:"]
     for name, path in modules.items():
         try:
             description = (ast.get_docstring(ast.parse(path.read_text())) or "").splitlines()[0]
         except (OSError, SyntaxError, IndexError):
             description = ""
         lines.append(f"  {name:20} {description}")
-    lines.extend(["", "just svc <服务>            查看动作和环境",
-                  "just svc paseo pair        选择环境并生成直连连接串",
-                  "just gateway               查看公网路由管理用法"])
+    lines.extend(["", "just svc <service>         Show actions and instances",
+                  "just svc paseo pair        Select an instance and generate a direct connection URI",
+                  "just gateway               Show public gateway commands"])
     return "\n".join(lines)
 
 
@@ -38,13 +38,13 @@ def main():
         print(help_text(modules))
         return
     if service not in modules:
-        print("error: 未知服务。\n" + help_text(modules), file=sys.stderr)
+        print("error: Unknown service.\n" + help_text(modules), file=sys.stderr)
         sys.exit(2)
     action = args[1] if len(args) > 1 else ""
     forwarded = args[1:] if action else []
     if action == "help":
         if len(args) > 2:
-            raise ValueError("服务帮助不接受额外参数")
+            raise ValueError("Service help does not accept extra arguments")
         forwarded = []
     os.execv(sys.executable, [sys.executable, str(modules[service]), *forwarded])
 

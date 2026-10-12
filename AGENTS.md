@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository holds infrastructure tooling and workspace conventions. For deployment commands, configuration, extensions or image upgrades, read [deployments/AGENTS.md](deployments/AGENTS.md).
+This repository is a workspace for coordinating work across the Git repositories under this directory. It does not contain product code.
 
 The user will specify the target repository or repositories. Do not modify this workspace unless explicitly requested.
 
