@@ -246,4 +246,3 @@ python3 "$infra_root/gateway/manage" check-credentials
 python3 "$infra_root/gateway/manage" plan
 finish
 say "Credential saved outside Git. Review the plan, then run: just gateway apply <route>"
-note "For the initial family environment: cd $infra_root && just gateway apply paseo1"
