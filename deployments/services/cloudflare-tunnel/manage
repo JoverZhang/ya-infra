@@ -11,47 +11,31 @@ import socket
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 
 SERVICE = Path(__file__).resolve().parent
 sys.path.insert(0, str(SERVICE.parents[1]))
 from infra_config import section
+import podman
 
-ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
+engine = podman.engine
+private_directory = podman.private_directory
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "infra/cloudflare-tunnel"
 STATE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "infra/cloudflare-tunnel"
 NAME = "infra-cloudflare-tunnel"
 LABELS = {"infra.managed": "true", "infra.service": "cloudflare-tunnel", "infra.owner": str(os.getuid())}
 
 
-def engine(*args, capture=True, check=True, input=None):
-    return subprocess.run(ENGINE + list(args), text=True, input=input, capture_output=capture, check=check)
-
-
 def inspect(kind, name):
-    p = engine(kind, "inspect", name, check=False)
-    if p.returncode:
-        exists = engine(kind, "exists", name, check=False)
-        if exists.returncode == 1:
-            return None
-        raise RuntimeError(p.stderr.strip() or f"Cannot inspect {kind} {name}")
-    return json.loads(p.stdout)[0]
-
-
-def private_directory(path):
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.chmod(0o700)
+    return podman.inspect(engine, kind, name)
 
 
 def owned(data):
     labels = data.get("Config", {}).get("Labels") or data.get("Spec", {}).get("Labels") or {}
-    if not all(labels.get(k) == v for k, v in LABELS.items()):
-        raise RuntimeError("Refusing to modify a resource not owned by infra/cloudflare-tunnel")
+    podman.require_owned(labels, LABELS, "Refusing to modify a resource not owned by infra/cloudflare-tunnel")
 
 
 def label_args():
-    return [arg for pair in LABELS.items() for arg in ("--label", "=".join(pair))]
+    return podman.label_args(LABELS)
 
 
 def settings():
@@ -114,16 +98,8 @@ def secret(token):
 
 
 def health(c, timeout=60):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{c['metrics_port']}/ready", timeout=2) as r:
-                if r.status == 200:
-                    return
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
-            pass
-        time.sleep(1)
-    raise RuntimeError("Cloudflare edge readiness timed out; inspect 'just svc cloudflare-tunnel logs'")
+    podman.wait_http_ready(f"http://127.0.0.1:{c['metrics_port']}/ready", timeout,
+                          "Cloudflare edge readiness timed out; inspect 'just svc cloudflare-tunnel logs'")
 
 
 def retire_legacy():
@@ -149,7 +125,7 @@ def deploy():
     token = (CONFIG / "token").read_text().strip()
     secret_name, token_hash = secret(token)
     spec = hashlib.sha256(json.dumps({"config": c, "image": image["Id"], "token": token_hash,
-                                     "implementation": Path(__file__).read_text()}, sort_keys=True).encode()).hexdigest()
+                                     "implementation": podman.source_text(__file__)}, sort_keys=True).encode()).hexdigest()
     current = inspect("container", NAME)
     if current:
         owned(current)

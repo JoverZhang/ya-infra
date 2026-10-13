@@ -3,6 +3,7 @@
 
 Failures covered: wrong invocation directory, fallback to old/parent config,
 lost arguments or exit codes, shell execution, and credentials in diagnostics.
+Wizard input/cwd, log output, foreign resources and engine failures use fixtures.
 """
 import json
 import os
@@ -28,14 +29,18 @@ class CommandChecks(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.deployment = self.root / "deployments" if self.root_proxy else self.root
         for name in ("justfile", "bin/svc", "services/paseo/manage", "services/paseo/pair",
-                     "services/paseo-web/manage", "gateway/model.py", "infra_config.py"):
+                     "services/paseo/login-wizard.sh", "services/paseo-web/manage",
+                     "services/cloudflare-tunnel/manage", "gateway/model.py", "gateway/cloudflare.py",
+                     "gateway/setup-wizard.sh", "infra_config.py", "podman.py", "lib/wizard.sh"):
+            if not (ROOT / name).is_file():
+                continue
             target = self.deployment / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, target)
         if self.root_proxy:
             shutil.copy2(ROOT.parent / "justfile", self.root / "justfile")
         self.config = self.root / "private"
-        self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.config)}
+        self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.config), "XDG_STATE_HOME": str(self.root / "state")}
         self.gateway = {"provider": "cloudflare-tunnel", "zone": "example.test", "account_id": "a" * 32,
                         "tunnel_id": "11111111-1111-4111-8111-111111111111"}
         self.routes = {}
@@ -52,15 +57,38 @@ class CommandChecks(unittest.TestCase):
         echoer = self.deployment / "services/echoer/manage"
         echoer.parent.mkdir(parents=True)
         echoer.write_text('"""Record arguments without interpreting them."""\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
-        (self.deployment / "gateway/manage").write_text('import json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        (self.deployment / "gateway/manage").write_text(
+            'import json, os, pathlib, subprocess, sys\n'
+            'if sys.argv[1:] == ["setup"]:\n'
+            '    sys.exit(subprocess.call(["bash", str(pathlib.Path(__file__).with_name("setup-wizard.sh"))]))\n'
+            'if sys.argv[1:] == ["check-credentials"]:\n'
+            '    assert pathlib.Path("config.toml").is_file()\n'
+            '    secret = pathlib.Path(os.environ["XDG_CONFIG_HOME"]) / "infra/gateway/public/credentials.env"\n'
+            '    if not secret.is_file() or os.environ["INFRA_TEST_TOKEN"] not in secret.read_text(): sys.exit(1)\n'
+            'print(json.dumps(sys.argv[1:]))\n')
         engine = self.root / "fixtures/podman"
         engine.parent.mkdir()
-        engine.write_text('#!/usr/bin/env python3\nimport json, os, sys\n'
+        engine.write_text('#!/usr/bin/env python3\nimport json, os, sys\nargs = sys.argv[4:]\n'
                           'if os.environ.get("INFRA_TEST_ENGINE_FAILED"):\n'
                           '    print("private-provider-error", file=sys.stderr); sys.exit(1)\n'
-                          'print(json.dumps([{ "Labels": {"infra.instance": "family-a"}, "State": "running"},'
-                          '{"Labels": {"infra.instance": "family-b"}, "State": "exited"}]))\n')
+                          'if os.environ.get("INFRA_TEST_ENGINE_BROKEN"):\n'
+                          '    print("fixture engine unavailable", file=sys.stderr); sys.exit(125)\n'
+                          'if args[0] == "ps":\n'
+                          '    print(json.dumps([{ "Labels": {"infra.instance": "family-a"}, "State": "running"},'
+                          '    {"Labels": {"infra.instance": "family-b"}, "State": "exited"}]))\n'
+                          'elif args[:2] == ["container", "inspect"]:\n'
+                          '    service = "paseo-web" if "paseo-web" in args[2] else "cloudflare-tunnel" if "cloudflare" in args[2] else "paseo"\n'
+                          '    labels = {"infra.managed":"true", "infra.service":service, "infra.owner":str(os.getuid())}\n'
+                          '    if service != "cloudflare-tunnel": labels["infra.instance"] = "main" if service == "paseo-web" else "family-a"\n'
+                          '    if os.environ.get("INFRA_TEST_FOREIGN"): labels["infra.owner"] = "foreign-owner"\n'
+                          '    print(json.dumps([{"Config":{"Labels":labels}, "State":{"Running":True, "Status":"running"}}]))\n'
+                          'elif args[0] in ("logs", "exec"): print("fixture command output")\n'
+                          'else: sys.exit(2)\n')
         engine.chmod(0o755)
+        for name in ("wslview", "explorer.exe", "xdg-open", "open"):
+            opener = engine.parent / name
+            opener.write_text('#!/bin/sh\nexit 0\n')
+            opener.chmod(0o755)
         self.env["PATH"] = str(engine.parent) + os.pathsep + os.environ["PATH"]
 
     def route(self, name, hostname, instance):
@@ -78,6 +106,8 @@ class CommandChecks(unittest.TestCase):
                           *(f'{key} = {json.dumps(value)}' for key, value in settings.items())])
         lines.extend(["", "[services.paseo-web]",
                       *(f'{key} = {json.dumps(value)}' for key, value in self.web.items())])
+        lines.extend(["", "[services.cloudflare-tunnel]", 'image_ref = "docker.io/cloudflare/cloudflared@sha256:' + "a" * 64 + '"',
+                      "metrics_port = 20242", "cpus = 1", 'memory = "512m"', "pids_limit = 128"])
         (directory or self.root).joinpath("config.toml").write_text("\n".join(lines) + "\n")
 
     def run_cli(self, *args, answers=None, cwd=None):
@@ -242,6 +272,43 @@ class CommandChecks(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("Missing", result.stderr)
         self.assertIn("config.toml", result.stderr)
+
+    def test_gateway_setup_creates_or_keeps_a_private_secret_without_leaking(self):
+        token = "fixture-management-token-0123456789"
+        self.env["INFRA_TEST_TOKEN"] = token
+        path = self.config / "infra/gateway/public/credentials.env"
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                result = self.run_cli("gateway", "setup", answers="\n" + token + "\n")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('["plan"]', result.stdout)
+                self.assertEqual(path.read_text(), "CLOUDFLARE_API_TOKEN=" + token + "\n")
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertNotIn(token, result.stdout + result.stderr)
+                if existing:
+                    self.assertNotIn("Create or repair", result.stdout)
+
+    def test_login_and_logs_preserve_visible_output(self):
+        result = self.run_cli("svc", "paseo", "login", "family-a", answers="\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Setup complete", result.stdout)
+        self.assertEqual(result.stdout.count("fixture command output"), 2)
+        for args in (("paseo", "logs", "family-a"), ("paseo-web", "logs"), ("cloudflare-tunnel", "logs")):
+            result = self.run_cli("svc", *args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "fixture command output")
+
+    def test_foreign_containers_and_engine_failure_are_not_treated_as_absent(self):
+        self.env["INFRA_TEST_FOREIGN"] = "1"
+        for args in (("paseo", "stop", "family-a"), ("paseo-web", "stop"), ("cloudflare-tunnel", "stop")):
+            result = self.run_cli("svc", *args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not owned", result.stderr)
+        self.env["INFRA_TEST_ENGINE_BROKEN"] = "1"
+        for service in ("paseo", "paseo-web", "cloudflare-tunnel"):
+            result = self.run_cli("svc", service, "status")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "")
 
 
 class RootProxyChecks(CommandChecks):

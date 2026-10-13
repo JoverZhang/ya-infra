@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Offline regression checks for preserving established Paseo data volumes."""
+"""Offline regression checks for data volumes and deployment source identity.
+
+Failures include missing/replaced volumes, foreign resources, engine outages and
+shared implementation edits incorrectly passing as unchanged deployments.
+"""
 from copy import deepcopy
 import importlib.machinery
 import importlib.util
@@ -8,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -110,7 +115,8 @@ class StorageChecks(unittest.TestCase):
         self.record()
         secret = "fixture-password-0123456789"
         specification = {"config": self.settings, "image": "fixture-image-id", "password": secret,
-                         "implementation": (ROOT / "services/paseo/manage").read_text()}
+                         "implementation": (ROOT / "services/paseo/manage").read_text()
+                         + ("\n" + (ROOT / "podman.py").read_text() if (ROOT / "podman.py").exists() else "")}
         self.container["Config"]["Labels"]["infra.spec"] = m.hashlib.sha256(
             json.dumps(specification, sort_keys=True).encode()).hexdigest()
         self.resources.pop(("volume", next(iter(m.volumes(INSTANCE)))))
@@ -202,6 +208,30 @@ class StorageChecks(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "missing data volumes"):
                 m.main()
         self.assert_no_mutation()
+
+    def test_shared_source_edit_requires_redeployment_with_the_same_data_volumes(self):
+        self.record()
+        manager = Path(self.directory.name) / "manage"
+        shared = manager.with_name("podman.py")
+        manager.write_text("fixture manager\n")
+        shared.write_text("fixture shared runtime\n")
+        secret = "fixture-password-0123456789"
+        specification = {"config": self.settings, "image": "fixture-image-id", "password": secret,
+                         "implementation": "fixture manager\n\nfixture shared runtime\n"}
+        self.container["Config"]["Labels"]["infra.spec"] = m.hashlib.sha256(
+            json.dumps(specification, sort_keys=True).encode()).hexdigest()
+        helper = getattr(m, "podman", SimpleNamespace())
+        with patch.object(m, "__file__", str(manager)), patch.object(m, "podman", helper, create=True), \
+                patch.object(helper, "__file__", str(shared), create=True), \
+                patch.object(m, "prepare_password", return_value=secret), \
+                patch.object(m, "resource_setup", side_effect=RuntimeError("replacement required")) as replace:
+            m.deploy(INSTANCE)
+            replace.assert_not_called()
+            shared.write_text("fixture shared runtime version two\n")
+            with self.assertRaisesRegex(RuntimeError, "replacement required"):
+                m.deploy(INSTANCE)
+            replace.assert_called_once()
+        self.assertTrue(all(call[1] in ("inspect", "exists") for call in self.calls))
 
 
 if __name__ == "__main__":

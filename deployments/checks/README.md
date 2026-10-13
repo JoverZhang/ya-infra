@@ -20,7 +20,7 @@ offline checks of missing-volume, replacement and adoption safeguards.
 | `just svc cloudflare-tunnel verify` | Calls deploy and checks idempotence; can replace a container if its specification differs |
 | `just svc paseo smoke <instance>` | Real Codex model usage and a temporary workspace file |
 
-Deployment specifications include manager source bytes as well as config/image
+Deployment specifications include manager/shared-runtime source as well as config/image
 identity. A source-only change can therefore replace a container on its next
 deploy and invalidate a verifier's unchanged-container expectation.
 

@@ -13,43 +13,32 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
 
 SERVICE = Path(__file__).resolve().parent
 ROOT = SERVICE.parents[1]
 sys.path.insert(0, str(ROOT))
 from gateway.model import hostnames_for
 from infra_config import section
+import podman
 
-ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
+engine = podman.engine
 NAME = "infra-paseo-web-main"
 NETWORK = NAME + "-net"
 LABELS = {"infra.managed": "true", "infra.service": "paseo-web", "infra.instance": "main", "infra.owner": str(os.getuid())}
 STATE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "infra/paseo-web"
 
 
-def engine(*args, check=True):
-    return subprocess.run(ENGINE + list(args), capture_output=True, text=True, check=check)
-
-
 def inspect(kind, name):
-    result = engine(kind, "inspect", name, check=False)
-    if result.returncode:
-        if engine(kind, "exists", name, check=False).returncode == 1:
-            return None
-        raise RuntimeError(f"Cannot inspect {kind} {name}; check the rootless engine")
-    return json.loads(result.stdout)[0]
+    return podman.inspect(engine, kind, name, error=f"Cannot inspect {kind} {name}; check the rootless engine")
 
 
 def owned(data):
     labels = data.get("Labels") or data.get("labels") or data.get("Config", {}).get("Labels") or {}
-    if not all(labels.get(key) == value for key, value in LABELS.items()):
-        raise RuntimeError("Refusing to modify a resource not owned by infra/paseo-web/main")
+    podman.require_owned(labels, LABELS, "Refusing to modify a resource not owned by infra/paseo-web/main")
 
 
 def label_args():
-    return [arg for pair in LABELS.items() for arg in ("--label", "=".join(pair))]
+    return podman.label_args(LABELS)
 
 
 def config():
@@ -64,16 +53,8 @@ def config():
 
 
 def health(c, timeout=30):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{c['port']}/healthz", timeout=2) as response:
-                if response.status == 200:
-                    return
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
-            pass
-        time.sleep(1)
-    raise RuntimeError("paseo-web health check failed; inspect 'just svc paseo-web logs'")
+    podman.wait_http_ready(f"http://127.0.0.1:{c['port']}/healthz", timeout,
+                          "paseo-web health check failed; inspect 'just svc paseo-web logs'")
 
 
 def build(c):
@@ -101,7 +82,7 @@ def deploy(c):
     if not image:
         raise RuntimeError("Shared UI image missing; run 'just svc paseo-web build'")
     spec = hashlib.sha256(json.dumps({"config": c, "image": image["Id"],
-                                     "implementation": Path(__file__).read_text()}, sort_keys=True).encode()).hexdigest()
+                                     "implementation": podman.source_text(__file__)}, sort_keys=True).encode()).hexdigest()
     current = inspect("container", NAME)
     if current:
         owned(current)

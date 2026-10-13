@@ -2,6 +2,7 @@
 """Manage named Paseo instances through the user's rootless Podman socket."""
 import argparse
 import fcntl
+from functools import partial
 import hashlib
 import json
 import os
@@ -14,34 +15,23 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
 
 SERVICE = Path(__file__).resolve().parent
 sys.path.insert(0, str(SERVICE.parents[1]))
 from gateway.model import hostnames_for, origins_for_service
 from infra_config import section
+import podman
 
-ENGINE = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
+engine = partial(podman.engine, capture=False)
+private_directory = podman.private_directory
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "infra/paseo"
 STATE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "infra/paseo"
 LABELS = {"infra.managed": "true", "infra.service": "paseo", "infra.owner": str(os.getuid())}
 PRIVATE_ROUTES = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10"]
 
 
-def engine(*args, capture=False, check=True, input=None):
-    return subprocess.run(ENGINE + list(args), text=True, input=input, capture_output=capture, check=check)
-
-
 def inspect(kind, name):
-    p = engine(kind, "inspect", name, capture=True, check=False)
-    if p.returncode:
-        # Do not treat a broken engine connection as an absent resource.
-        exists = engine(kind, "exists", name, capture=True, check=False)
-        if exists.returncode == 1:
-            return None
-        raise RuntimeError(p.stderr.strip() or f"Cannot inspect {kind} {name}")
-    return json.loads(p.stdout)[0]
+    return podman.inspect(engine, kind, name)
 
 
 def labels_for(instance):
@@ -49,13 +39,12 @@ def labels_for(instance):
 
 
 def label_args(instance):
-    return [arg for pair in labels_for(instance).items() for arg in ("--label", "=".join(pair))]
+    return podman.label_args(labels_for(instance))
 
 
 def owned(data, instance):
-    actual = data.get("Labels") or data.get("labels") or data.get("Config", {}).get("Labels") or {}
-    if not all(actual.get(k) == v for k, v in labels_for(instance).items()):
-        raise RuntimeError(f"Refusing to modify a resource not owned by infra/paseo/{instance}")
+    labels = data.get("Labels") or data.get("labels") or data.get("Config", {}).get("Labels") or {}
+    podman.require_owned(labels, labels_for(instance), f"Refusing to modify a resource not owned by infra/paseo/{instance}")
 
 
 def versions():
@@ -107,11 +96,6 @@ def volumes(instance):
 
 def password_file(instance):
     return CONFIG / instance / "password"
-
-
-def private_directory(path):
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.chmod(0o700)
 
 
 def prepare_password(instance):
@@ -203,17 +187,8 @@ def resource_setup(instance, c):
 
 
 def health(instance, c, timeout=45):
-    deadline = time.monotonic() + timeout
     url = f"http://127.0.0.1:{c['port']}/api/health"
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=2) as r:
-                if r.status == 200:
-                    return
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
-            pass
-        time.sleep(1)
-    raise RuntimeError(f"{instance}: health check timed out at {url}; inspect 'just svc paseo logs {instance}'")
+    podman.wait_http_ready(url, timeout, f"{instance}: health check timed out at {url}; inspect 'just svc paseo logs {instance}'")
 
 
 def deploy(instance):
@@ -225,7 +200,7 @@ def deploy(instance):
     ensure_volumes(instance, current, create=True)
     secret = prepare_password(instance)
     spec = hashlib.sha256(json.dumps({"config": c, "image": image["Id"], "password": secret,
-                                     "implementation": Path(__file__).read_text()}, sort_keys=True).encode()).hexdigest()
+                                     "implementation": podman.source_text(__file__)}, sort_keys=True).encode()).hexdigest()
     if current:
         owned(current, instance)
         if current["Config"]["Labels"].get("infra.spec") == spec:
