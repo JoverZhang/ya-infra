@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+auth.json
+*.tar
+*.tar.gz
+*.log
+config.toml
+infra.toml
+/.infra/

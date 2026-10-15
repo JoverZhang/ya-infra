@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Use Paseo's authenticated WebSocket client and check actual Codex file output."""
+import importlib.machinery
+import importlib.util
+from pathlib import Path
+import secrets
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+loader = importlib.machinery.SourceFileLoader("paseo_manage", str(ROOT / "services/paseo/manage"))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+
+
+def main(instance):
+    m.require_container(instance)
+    nonce = secrets.token_hex(8)
+    path = "/workspace/.infra-codex-smoke-" + nonce + ".txt"
+    content = "paseo-codex-file-access-ok-" + nonce
+    prompt = f"Create {path} containing exactly {content} followed by a newline. Read the file back and reply with its contents. Do not modify any other file."
+    try:
+        p = m.engine("exec", m.name(instance), "paseo", "run", "--provider", "codex",
+                     "--host", "127.0.0.1:6767", "--cwd", "/workspace",
+                     "--title", "Infra read-write verification", "--wait-timeout", "2m", "--json", prompt,
+                     capture=True, check=False)
+        if p.returncode:
+            raise RuntimeError("Paseo agent run failed: " + p.stderr.strip())
+        script = "from pathlib import Path; import sys; assert Path(sys.argv[1]).read_text() == sys.argv[2] + '\\n'"
+        result = m.engine("exec", m.name(instance), "python3", "-c", script, path, content,
+                          capture=True, check=False)
+        if result.returncode:
+            raise RuntimeError("Codex did not produce the expected file. Inspect the latest 'Infra read-write verification' session in Paseo.")
+        print(f"PASS {instance}: authenticated Paseo connection, Codex inference and actual workspace file output")
+    finally:
+        m.engine("exec", m.name(instance), "python3", "-c",
+                 "from pathlib import Path; import sys; Path(sys.argv[1]).unlink(missing_ok=True)",
+                 path, capture=True, check=False)
+
+
+if __name__ == "__main__":
+    try:
+        if len(sys.argv) != 2:
+            raise ValueError("Pass one explicit instance name")
+        main(sys.argv[1])
+    except Exception as e:
+        print("FAIL " + str(e), file=sys.stderr)
+        sys.exit(1)

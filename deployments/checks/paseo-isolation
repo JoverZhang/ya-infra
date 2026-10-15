@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Exercise isolation and persistence; only restart the disposable demo instance."""
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import secrets
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+loader = importlib.machinery.SourceFileLoader("paseo_manage", str(ROOT / "services/paseo/manage"))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+INSTANCES = tuple(instance for instance in sorted(m.instances())
+                  if m.inspect("container", m.name(instance)))
+
+
+def check(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+    print("PASS " + message)
+
+
+def http(port, path, password=None, hostname=None):
+    headers = {"Authorization": "Bearer " + password} if password else {}
+    if hostname:
+        headers["Host"] = hostname
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+def execute(instance, script, *args, check_result=True):
+    return m.engine("exec", m.name(instance), "python3", "-c", script, *args,
+                    capture=True, check=check_result)
+
+
+def main():
+    check("demo" in INSTANCES, "demo is deployed for runtime verification")
+    data = {i: m.require_container(i) for i in INSTANCES}
+    configs = {i: m.config(i) for i in INSTANCES}
+    passwords = {i: m.password_file(i).read_text().strip() for i in INSTANCES}
+    check(len(set(passwords.values())) == len(passwords), "configured instances have distinct passwords")
+    all_mounts = []
+    for instance in INSTANCES:
+        d = data[instance]
+        h = d["HostConfig"]
+        check(d["State"]["Running"], f"{instance}: container running")
+        check(d["Config"]["User"] == "1000:1000", f"{instance}: non-root user")
+        check(h["ReadonlyRootfs"] and not h["Privileged"], f"{instance}: read-only image, unprivileged")
+        p = execute(instance, "from pathlib import Path; s=Path('/proc/self/status').read_text(); print(next(x for x in s.splitlines() if x.startswith('CapEff:'))); print(next(x for x in s.splitlines() if x.startswith('NoNewPrivs:')))")
+        check("0000000000000000" in p.stdout and "NoNewPrivs:\t1" in p.stdout,
+              f"{instance}: zero capabilities and no new privileges")
+        c = configs[instance]
+        expected_memory = int(c["memory"][:-1]) * 1024 ** (3 if c["memory"][-1] == "g" else 2)
+        check(h["Memory"] == expected_memory and h["PidsLimit"] == c["pids_limit"]
+              and h["CpuQuota"] / h["CpuPeriod"] == c["cpus"],
+              f"{instance}: CPU, memory and process limits applied")
+        mounted = {x["Name"]: x["Destination"] for x in d["Mounts"] if x["Type"] == "volume"}
+        check(mounted == m.volumes(instance) and all(x["Type"] != "bind" for x in d["Mounts"]),
+              f"{instance}: only its own named data volumes")
+        all_mounts.append(set(mounted))
+        port = configs[instance]["port"]
+        check(http(port, "/")[0] == 200, f"{instance}: bundled web UI serves")
+        check(http(port, "/api/status")[0] == 401, f"{instance}: unauthenticated API denied")
+        check(http(port, "/api/status", passwords[instance])[0] == 200, f"{instance}: own password accepted")
+        wrong_password = next((passwords[x] for x in INSTANCES if x != instance), secrets.token_urlsafe(32))
+        check(http(port, "/api/status", wrong_password)[0] == 401, f"{instance}: wrong password denied")
+        for hostname in c["hostnames"]:
+            check(http(port, "/api/status", passwords[instance], hostname)[0] == 200,
+                  f"{instance}: declared gateway hostname accepted")
+        check(http(port, "/api/status", passwords[instance], "unlisted.example.invalid")[0] == 403,
+              f"{instance}: undeclared DNS hostname denied")
+        execute(instance,
+                "from pathlib import Path; import sys; assert not any(Path(p).exists() for p in sys.argv[1:])",
+                str(ROOT), f"/run/user/{os.getuid()}/podman/podman.sock")
+        check(True, f"{instance}: host workspace and engine socket absent")
+    check(sum(map(len, all_mounts)) == len(set().union(*all_mounts)), "no persistent volume is shared")
+
+    marker = ".infra-verification-" + secrets.token_hex(8)
+    paths = ["/workspace/" + marker, "/home/paseo/.paseo/" + marker]
+    try:
+        execute("demo", "from pathlib import Path; import sys; [Path(x).write_text('isolated-persistent-data') for x in sys.argv[1:]]", *paths)
+        for peer in (x for x in INSTANCES if x != "demo"):
+            execute(peer, "from pathlib import Path; import sys; assert not any(Path(x).exists() for x in sys.argv[1:])", *paths)
+            check(True, f"{peer}: demo workspace and local session storage invisible")
+        for i in INSTANCES:
+            subnet = next(iter(data[i]["NetworkSettings"]["Networks"].values()))
+            targets = [["169.254.1.2", 6767],
+                       ["169.254.1.2", 7878], [subnet["Gateway"], 6767], [subnet["Gateway"], 43000]]
+            for peer in (x for x in INSTANCES if x != i):
+                peer_net = next(iter(data[peer]["NetworkSettings"]["Networks"].values()))
+                targets.append([peer_net["IPAddress"], 6767])
+            script = """import json,socket,sys
+for host,port in json.loads(sys.argv[1]):
+    try:
+        with socket.create_connection((host,port),timeout=2): pass
+    except OSError: continue
+    raise RuntimeError(f'Unexpected access to {host}:{port}')
+"""
+            execute(i, script, json.dumps(targets))
+            check(True, f"{i}: tested host management ports and configured peers unreachable")
+            p = m.engine("exec", m.name(i), "curl", "-sS", "--connect-timeout", "10", "--max-time", "20",
+                         "-o", "/dev/null", "-w", "%{http_code}", "https://auth.openai.com/", capture=True, check=False)
+            check(p.returncode == 0 and p.stdout.strip() != "000", f"{i}: public HTTPS connectivity")
+        before = data["demo"]["Id"]
+        subprocess.run(["python3", str(ROOT / "services/paseo/manage"), "deploy", "demo"], check=True, capture_output=True)
+        check(m.inspect("container", m.name("demo"))["Id"] == before, "unchanged deploy keeps the running container")
+        m.engine("restart", m.name("demo"), capture=True)
+        m.health("demo", configs["demo"])
+        execute("demo", "from pathlib import Path; import sys; assert all(Path(x).read_text()=='isolated-persistent-data' for x in sys.argv[1:])", *paths)
+        check(True, "workspace and local session storage persist through restart")
+    finally:
+        execute("demo", "from pathlib import Path; import sys; [Path(x).unlink(missing_ok=True) for x in sys.argv[1:]]", *paths, check_result=False)
+    print("Codex inference must additionally be checked after each instance completes its independent login.")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        # HTTP headers, environment contents and login credentials are never emitted.
+        print("FAIL " + str(e), file=sys.stderr)
+        sys.exit(1)

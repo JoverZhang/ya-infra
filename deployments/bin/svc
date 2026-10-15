@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Discover service modules and forward arguments to their command entrypoint."""
+import ast
+import os
+from pathlib import Path
+import re
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from gateway.model import IDENTIFIER
+
+
+def services():
+    return {path.parent.name: path for path in sorted((ROOT / "services").glob("*/manage"))
+            if path.is_file() and re.fullmatch(IDENTIFIER, path.parent.name)}
+
+
+def help_text(modules):
+    lines = ["Usage: just svc <service> <action> [instance] [options]", "", "Available services:"]
+    for name, path in modules.items():
+        try:
+            description = (ast.get_docstring(ast.parse(path.read_text())) or "").splitlines()[0]
+        except (OSError, SyntaxError, IndexError):
+            description = ""
+        lines.append(f"  {name:20} {description}")
+    lines.extend(["", "just svc <service>         Show actions and instances",
+                  "just svc paseo pair        Select an instance and generate a direct connection URI",
+                  "just gateway               Show public gateway commands"])
+    return "\n".join(lines)
+
+
+def main():
+    args = sys.argv[1:]
+    modules = services()
+    service = args[0] if args else ""
+    if service in ("", "help", "-h", "--help"):
+        print(help_text(modules))
+        return
+    if service not in modules:
+        print("error: Unknown service.\n" + help_text(modules), file=sys.stderr)
+        sys.exit(2)
+    action = args[1] if len(args) > 1 else ""
+    forwarded = args[1:] if action else []
+    if action == "help":
+        if len(args) > 2:
+            raise ValueError("Service help does not accept extra arguments")
+        forwarded = []
+    os.execv(sys.executable, [sys.executable, str(modules[service]), *forwarded])
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, OSError) as error:
+        print("error: " + str(error), file=sys.stderr)
+        sys.exit(1)

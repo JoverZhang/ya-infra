@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Print one direct connection URI for a declared public Paseo environment."""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+from urllib.parse import urlencode
+
+SERVICE = Path(__file__).resolve().parent
+sys.path.insert(0, str(SERVICE.parents[1]))
+from gateway.model import IDENTIFIER, hostnames_for, routes
+from infra_config import section
+
+
+def password(instance):
+    config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    password_file = config / "infra/paseo" / instance / "password"
+    if not password_file.is_file():
+        raise ValueError("Missing password file; deploy this instance first")
+    if stat.S_IMODE(password_file.stat().st_mode) & 0o077:
+        raise ValueError("Password file must have private permissions (0600)")
+    value = password_file.read_text().strip()
+    if len(value) < 24 or not re.fullmatch(r"[a-zA-Z0-9_-]+", value):
+        raise ValueError("Invalid password file format")
+    return value
+
+
+def runtime_states():
+    engine = ["podman", "--remote", "--url", f"unix:///run/user/{os.getuid()}/podman/podman.sock"]
+    try:
+        result = subprocess.run(engine + ["ps", "--all", "--filter", "label=infra.managed=true",
+                                "--filter", "label=infra.service=paseo",
+                                "--filter", f"label=infra.owner={os.getuid()}", "--format", "json"],
+                                capture_output=True, text=True, timeout=5, check=True)
+        containers = json.loads(result.stdout)
+        labels = {"running": "running", "exited": "stopped", "stopped": "stopped",
+                  "created": "created", "paused": "paused"}
+        return {item["Labels"]["infra.instance"]: labels.get(item.get("State"), "unknown")
+                for item in containers if item.get("Labels", {}).get("infra.instance")}
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return None
+
+
+def available_targets(instance=None):
+    names = sorted(section("services", "paseo", "instances"))
+    if instance is not None:
+        if not re.fullmatch(IDENTIFIER, instance) or instance not in names:
+            raise ValueError("Unknown Paseo instance; run 'just svc paseo pair --list' to list instances")
+        names = [instance]
+    declared = routes()
+    states = runtime_states()
+    targets, unavailable = [], []
+    for name in names:
+        if not re.fullmatch(IDENTIFIER, name):
+            unavailable.append((name, "Invalid instance name"))
+            continue
+        hosts = sorted(route.hostname for route in declared if route.backend == "paseo/" + name)
+        if not hosts:
+            unavailable.append((name, "Missing public Route"))
+            continue
+        try:
+            password(name)
+        except ValueError as error:
+            unavailable.append((name, str(error)))
+            continue
+        except OSError:
+            unavailable.append((name, "Unreadable password file"))
+            continue
+        state = states.get(name, "not deployed") if states is not None else "unknown"
+        targets.extend({"instance": name, "hostname": host, "state": state} for host in hosts)
+    return targets, unavailable
+
+
+def show_targets(targets, unavailable, stream):
+    print("Paseo instances available for direct connection:", file=stream)
+    for number, target in enumerate(targets, 1):
+        print(f"  {number}) {target['instance']:16} {target['hostname']:30} {target['state']}", file=stream)
+    if not targets:
+        print("  No instances available for direct connection", file=stream)
+    if unavailable:
+        print("\nUnavailable instances:", file=stream)
+        for name, reason in unavailable:
+            print(f"  {name}: {reason}", file=stream)
+
+
+def choose_target(targets):
+    while True:
+        default = " [Enter selects the only instance]" if len(targets) == 1 else ""
+        print(f"\nSelect a number or instance name{default} (q to cancel):", end="", file=sys.stderr, flush=True)
+        answer = sys.stdin.readline()
+        if not answer or answer.strip().lower() in ("q", "quit"):
+            print("Cancelled", file=sys.stderr)
+            return None
+        answer = answer.strip()
+        if not answer and len(targets) == 1:
+            return targets[0]
+        if answer.isdecimal() and 1 <= int(answer) <= len(targets):
+            return targets[int(answer) - 1]
+        matched = [target for target in targets if target["instance"] == answer]
+        if len(matched) == 1:
+            return matched[0]
+        message = "This instance has multiple hostnames; select a number" if matched else "Enter a number or instance name from the menu"
+        print(message, file=sys.stderr)
+
+
+def pairing_link(instance, hostname=None):
+    if not re.fullmatch(IDENTIFIER, instance):
+        raise ValueError("Use a valid Paseo instance name")
+    if instance not in section("services", "paseo", "instances"):
+        raise ValueError("Unknown Paseo instance: " + instance)
+    hosts = hostnames_for("paseo/" + instance)
+    if hostname:
+        if hostname not in hosts:
+            raise ValueError("Hostname is not declared for this Paseo instance")
+    elif len(hosts) == 1:
+        hostname = hosts[0]
+    else:
+        raise ValueError("Declare one public Route for this instance, or select its hostname explicitly")
+    return "tcp://" + hostname + ":443?" + urlencode({"ssl": "true", "password": password(instance)})
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="just svc paseo pair", description=__doc__,
+        epilog="Paste into Direct connection → Advanced → Connection URI in the web UI; press Enter, then select Connect.")
+    parser.add_argument("instance", nargs="?", help="Instance name; omit to select interactively")
+    parser.add_argument("--hostname", help="Select a declared public hostname for this instance")
+    parser.add_argument("--list", action="store_true", help="List instances without passwords or connection URIs")
+    args = parser.parse_args()
+    if args.hostname and not args.instance:
+        parser.error("--hostname requires an instance name")
+    if args.instance and not args.list:
+        if args.hostname or len(hostnames_for("paseo/" + args.instance)) == 1:
+            print(pairing_link(args.instance, args.hostname))
+            return 0
+    targets, unavailable = available_targets(args.instance)
+    if args.hostname:
+        targets = [target for target in targets if target["hostname"] == args.hostname]
+        if not targets:
+            raise ValueError("Hostname is not a declared public hostname for this instance")
+    show_targets(targets, unavailable, sys.stdout if args.list else sys.stderr)
+    if args.list:
+        return 0
+    if not targets:
+        print("Configure a public Route and deploy an instance first. Usage: just svc paseo deploy <instance>", file=sys.stderr)
+        return 2
+    if not sys.stdin.isatty():
+        print("Non-interactive use requires an instance: just svc paseo pair <instance> [--hostname <hostname>]", file=sys.stderr)
+        return 2
+    target = choose_target(targets)
+    if target is not None:
+        print(pairing_link(target["instance"], target["hostname"]))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (ValueError, OSError) as error:
+        print("error: " + str(error), file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nCancelled", file=sys.stderr)
+        sys.exit(130)
