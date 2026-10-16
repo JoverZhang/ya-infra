@@ -44,3 +44,20 @@ metrics_port = 20242
 cpus = 1
 memory = "512m"
 pids_limit = 128
+
+[services.tbg]
+# Build or load the upstream image, then use its immutable local image ID.
+image_ref = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+container_name = "tbg"
+server_config = "~/.config/tbg/server.yaml"
+data_volume = "tbg-data"
+health_url = "http://127.0.0.1:18473/v1/whoami"
+
+[services.browserlab]
+image_ref = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+container_name = "browserlab"
+profile_dir = "~/.local/share/mira-services/browserlab"
+workspace_dir = "~/lab"
+port = 43000
+cdp_port = 9222
+timezone = "UTC"

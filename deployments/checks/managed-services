@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Check the public service commands with private filesystem/engine fixtures.
+
+Failures covered: accidental empty data, foreign-container replacement, mutable
+images, credentials in generated units, broken quoting, duplicate restarts,
+failed upgrades losing the previous definition, or a global restart on install.
+"""
+import http.server
+import json
+import os
+from pathlib import Path
+import shutil
+import shlex
+import subprocess
+import tempfile
+import threading
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+IMAGE = "sha256:" + "a" * 64
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(405 if self.path == "/v1/whoami" else 200)
+        self.end_headers()
+        self.wfile.write(b'{"error":"use POST"}' if self.path == "/v1/whoami" else b'{}')
+
+    def log_message(self, *args):
+        pass
+
+
+class ManagedServices(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="infra service's % check-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.repo = self.root / "repo"
+        shutil.copytree(ROOT, self.repo / "deployments", ignore=shutil.ignore_patterns("checks", "__pycache__"))
+        shutil.copy2(ROOT.parent / "justfile", self.repo / "justfile")
+        self.private = self.root / "private"
+        self.profile = self.root / "browser profile %"
+        self.profile.mkdir()
+        self.data = self.root / "data"
+        self.data.mkdir()
+        (self.data / "gateway.sqlite").write_bytes(b"fixture initialized database")
+        self.server = self.root / "server config.yaml"
+        self.server.write_text("telegram:\n  bot_token: fixture-secret-never-in-units\n")
+        self.server.chmod(0o600)
+        self.state = self.root / "state.json"
+        self.state.write_text(json.dumps({"calls": [], "active": False}))
+        self.ports = []
+        for _ in range(2):
+            server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+            self.ports.append(server.server_port)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+        self.settings = {
+            "tbg": {"image_ref": IMAGE, "container_name": "fixture-tbg", "server_config": str(self.server),
+                    "data_volume": "fixture-tbg-data", "health_url": f"http://127.0.0.1:{self.ports[0]}/v1/whoami"},
+            "browserlab": {"image_ref": IMAGE, "container_name": "fixture-browserlab",
+                           "profile_dir": str(self.profile), "workspace_dir": str(self.root),
+                           "port": self.ports[0], "cdp_port": self.ports[1], "timezone": "UTC"},
+        }
+        self.write_config()
+        binary = self.root / "bin"
+        binary.mkdir()
+        fixture = '''#!/usr/bin/env python3
+import json, os, pathlib, sys
+path = pathlib.Path(os.environ['FIXTURE_STATE'])
+state = json.loads(path.read_text())
+kind = pathlib.Path(sys.argv[0]).name
+args = sys.argv[4:] if kind == 'podman' else sys.argv[2:]
+state['calls'].append([kind, *args])
+code = 0
+if kind == 'podman':
+    if args[:2] == ['image', 'inspect']:
+        print(json.dumps([{'Id': args[2]}]))
+    elif args[:2] == ['volume', 'inspect']:
+        print(json.dumps([{'Name':args[2], 'Mountpoint':os.environ['FIXTURE_DATA'], 'CreatedAt':'fixture-volume-created'}]))
+    elif args[:2] == ['container', 'inspect']:
+        if state.get('foreign'):
+            print(json.dumps([{'Config':{'Labels':{'infra.owner':'foreign'}}}]))
+        else:
+            code = 1
+    elif args[:2] == ['container', 'exists']:
+        code = 1
+    else:
+        code = 2
+elif kind == 'systemctl':
+    if args[0] == 'is-active':
+        code = 0 if state['active'] else 3
+    elif args[0] in ['restart', 'start']:
+        if state.pop('fail_once', False):
+            code = 1
+        else:
+            state['active'] = True
+    elif args[0] == 'stop':
+        state['active'] = False
+path.write_text(json.dumps(state))
+sys.exit(code)
+'''
+        for name in ["podman", "systemctl"]:
+            path = binary / name
+            path.write_text(fixture)
+            path.chmod(0o755)
+        self.env = {**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                    "XDG_CONFIG_HOME": str(self.private), "XDG_STATE_HOME": str(self.root / "state"),
+                    "FIXTURE_STATE": str(self.state), "FIXTURE_DATA": str(self.data)}
+
+    def write_config(self):
+        lines = []
+        for service, settings in self.settings.items():
+            lines += [f"[services.{service}]", *(f"{key} = {json.dumps(value)}" for key, value in settings.items()), ""]
+        (self.root / "config.toml").write_text("\n".join(lines))
+
+    def command(self, service, action):
+        return subprocess.run(["just", "-f", str(self.repo / "justfile"), "svc", service, action],
+                              cwd=self.root, env=self.env, capture_output=True, text=True, timeout=10)
+
+    def calls(self):
+        return json.loads(self.state.read_text())["calls"]
+
+    def test_native_render_preserves_ports_data_and_literal_paths_without_secrets(self):
+        directory = self.root / "quadlets"
+        directory.mkdir()
+        for service in self.settings:
+            result = self.command(service, "render")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("fixture-secret-never-in-units", result.stdout + result.stderr)
+            self.assertIn("Pull=never", result.stdout)
+            self.assertIn("%%", result.stdout)
+            (directory / f"infra-{service}.container").write_text(result.stdout)
+        generator = subprocess.run(["/usr/lib/podman/quadlet", "--user", "--dryrun"],
+                                   env={**os.environ, "QUADLET_UNIT_DIRS": str(directory)},
+                                   capture_output=True, text=True, timeout=10)
+        self.assertEqual(generator.returncode, 0, generator.stderr)
+        self.assertIn("--publish 127.0.0.1:", generator.stdout)
+        self.assertIn("fixture-tbg-data:/var/lib/tbg", generator.stdout)
+        commands = [shlex.split(line.removeprefix("ExecStart=")) for line in generator.stdout.splitlines()
+                    if line.startswith("ExecStart=")]
+        self.assertEqual(len(commands), 2)
+        for command in commands:
+            self.assertIn(IMAGE, command)
+            for index, argument in enumerate(command):
+                if argument == "-v":
+                    self.assertFalse(command[index + 1].startswith('"'))
+                    self.assertFalse(command[index + 1].endswith('"'))
+
+    def test_mutable_image_is_rejected(self):
+        self.settings["tbg"]["image_ref"] = "localhost/tbg:latest"
+        self.write_config()
+        self.assertNotEqual(self.command("tbg", "deploy").returncode, 0)
+        self.assertFalse(any(call[0] == "systemctl" for call in self.calls()))
+
+    def test_missing_database_or_profile_does_not_create_empty_data(self):
+        (self.data / "gateway.sqlite").unlink()
+        self.profile.rmdir()
+        for service in self.settings:
+            self.assertNotEqual(self.command(service, "deploy").returncode, 0)
+        self.assertFalse(self.profile.exists())
+        self.assertFalse(any(call[0] == "systemctl" for call in self.calls()))
+
+    def test_foreign_container_is_not_replaced(self):
+        state = json.loads(self.state.read_text())
+        state["foreign"] = True
+        self.state.write_text(json.dumps(state))
+        self.assertNotEqual(self.command("tbg", "deploy").returncode, 0)
+        self.assertFalse(any(call[0] == "systemctl" for call in self.calls()))
+
+    def test_deploy_is_idempotent_and_config_changes_restart(self):
+        for _ in range(2):
+            result = self.command("tbg", "deploy")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sum(call[1] == "restart" for call in self.calls() if call[0] == "systemctl"), 1)
+        self.settings["tbg"]["image_ref"] = "sha256:" + "b" * 64
+        self.write_config()
+        self.assertEqual(self.command("tbg", "deploy").returncode, 0)
+        self.assertEqual(sum(call[1] == "restart" for call in self.calls() if call[0] == "systemctl"), 2)
+
+    def test_failed_upgrade_restores_previous_unit(self):
+        self.assertEqual(self.command("tbg", "deploy").returncode, 0)
+        unit = self.private / "containers/systemd/infra-tbg.container"
+        original = unit.read_text()
+        self.settings["tbg"]["image_ref"] = "sha256:" + "b" * 64
+        self.write_config()
+        state = json.loads(self.state.read_text())
+        state["fail_once"] = True
+        self.state.write_text(json.dumps(state))
+        self.assertNotEqual(self.command("tbg", "deploy").returncode, 0)
+        self.assertEqual(unit.read_text(), original)
+
+    def test_boot_install_uses_socket_without_restarting_all_containers(self):
+        result = self.command("podman", "install")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        unit = self.private / "systemd/user/podman-restart.service.d/infra.conf"
+        self.assertIn("--remote", unit.read_text())
+        self.assertIn("Requires=podman.socket", unit.read_text())
+        self.assertFalse(any(call[:3] == ["systemctl", "restart", "podman-restart.service"] for call in self.calls()))
+
+
+if __name__ == "__main__":
+    result = unittest.main(exit=False).result
+    print(json.dumps({"check": "managed-services", "tests": result.testsRun,
+                      "failures": len(result.failures), "errors": len(result.errors)}))
+    raise SystemExit(not result.wasSuccessful())

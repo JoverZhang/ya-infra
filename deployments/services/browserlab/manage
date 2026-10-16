@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Manage the existing browser profile, desktop and loopback CDP relay."""
+import os
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+import podman
+import quadlet
+
+
+def definition(config):
+    profile, workspace = quadlet.path(config["profile_dir"]), quadlet.path(config["workspace_dir"])
+    if not profile.is_dir() or not workspace.is_dir():
+        raise ValueError("Existing profile_dir and workspace_dir must exist; no directories are created")
+    ports = [config["port"], config["cdp_port"]]
+    if any(type(port) is not int or not 1024 <= port <= 65535 for port in ports) or ports[0] == ports[1]:
+        raise ValueError("port and cdp_port must be distinct unprivileged TCP ports")
+    environment = {"PUID": os.getuid(), "PGID": os.getgid(), "TZ": config["timezone"],
+                   "OPENCLI_WINDOW": "foreground", "BROWSERLAB_CDP_RELAY_PORT": 9223,
+                   "BROWSERLAB_CDP_CHROME_PORT": 9222,
+                   "CHROME_CLI": "--remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --no-first-run"}
+    options = ["Entrypoint=/usr/local/bin/browserlab-entrypoint", "ShmSize=4g",
+               f"PublishPort=127.0.0.1:{ports[0]}:3000", f"PublishPort=127.0.0.1:{ports[1]}:9223",
+               "Volume=" + quadlet.value(str(profile) + ":/config"),
+               "Volume=" + quadlet.value(str(workspace) + ":/workspace/lab:ro")]
+    options += ["Environment=" + quadlet.quote(key + "=" + str(value)) for key, value in environment.items()]
+    if Path("/dev/dri").exists():
+        options += ["AddDevice=/dev/dri"]
+    return quadlet.unit("browserlab", config, options,
+                        [["/usr/bin/test", "-d", str(profile)], ["/usr/bin/test", "-d", str(workspace)]])
+
+
+def verify(config):
+    for port, endpoint in [(config["port"], "/"), (config["cdp_port"], "/json/version")]:
+        podman.wait_http_ready(f"http://127.0.0.1:{port}{endpoint}", 60, "Browserlab local probe failed")
+
+
+if __name__ == "__main__":
+    quadlet.report(lambda: quadlet.main("browserlab", definition, verify))

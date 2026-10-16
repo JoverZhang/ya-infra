@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Isolate boot recovery through the rootless Podman socket."""
+import argparse
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="just svc podman", description=__doc__)
+    parser.add_argument("action", nargs="?", choices=["install", "status"])
+    args = parser.parse_args()
+    if args.action is None:
+        parser.print_help()
+        return
+    if args.action == "status":
+        subprocess.run(["systemctl", "--user", "show", "podman-restart.service",
+                        "-p", "Result", "-p", "ExecStart", "-p", "DropInPaths"], check=True)
+        return
+    target = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    target = target / "systemd/user/podman-restart.service.d/infra.conf"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".tmp")
+    temporary.write_bytes(Path(__file__).with_name("boot.conf").read_bytes())
+    temporary.chmod(0o600)
+    temporary.replace(target)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "podman.socket", "podman-restart.service"], check=True)
+    subprocess.run(["systemctl", "--user", "start", "podman.socket"], check=True)
+    print("Installed socket-based boot recovery; existing containers were not restarted")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, subprocess.CalledProcessError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        sys.exit(1)
