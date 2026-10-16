@@ -14,6 +14,8 @@ TBG and Browserlab use Quadlet. `deploy` compiles the invocation directory's
 starts the resulting user service. Generated files are deployment artifacts;
 edit the TOML source and redeploy. Units start independently at boot and do not
 depend on a repository checkout. Module help owns the command list.
+Each unit has a generated cleanup drop-in under `~/.config/systemd/user/`;
+native starts refuse name collisions and cleanup selects only owned containers.
 
 Legacy adoption requires a data backup, then stopping and renaming the old
 container and setting its restart policy to `no`. Keep it for rollback until

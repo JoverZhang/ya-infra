@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check the public service commands with private filesystem/engine fixtures.
 
-Failures covered: accidental empty data, foreign-container replacement, mutable
+Failures covered: accidental empty data, foreign-container replacement or cleanup, mutable
 images, credentials in generated units, broken quoting, duplicate restarts,
 failed upgrades losing the previous definition, or a global restart on install.
 """
@@ -9,6 +9,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import shlex
 import subprocess
@@ -143,6 +144,8 @@ sys.exit(code)
         self.assertEqual(len(commands), 2)
         for command in commands:
             self.assertIn(IMAGE, command)
+            self.assertIn("--replace=false", command)
+            self.assertLess(command.index("--replace"), command.index("--replace=false"))
             for index, argument in enumerate(command):
                 if argument == "-v":
                     self.assertFalse(command[index + 1].startswith('"'))
@@ -169,6 +172,24 @@ sys.exit(code)
         self.assertNotEqual(self.command("tbg", "deploy").returncode, 0)
         self.assertFalse(any(call[0] == "systemctl" for call in self.calls()))
 
+    def test_native_cleanup_only_selects_owned_container(self):
+        for service, settings in self.settings.items():
+            result = self.command(service, "deploy")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            override = self.private / f"systemd/user/infra-{service}.service.d/20-infra-ownership.conf"
+            content = override.read_text()
+            for action in ["ExecStop", "ExecStopPost"]:
+                self.assertIn(action + "=\n", content)
+                commands = [shlex.split(line.split("=", 1)[1]) for line in content.splitlines()
+                            if line.startswith(action + "=") and line != action + "="]
+                self.assertEqual(len(commands), 1)
+                pattern = next(item.removeprefix("name=") for item in commands[0] if item.startswith("name="))
+                self.assertIsNotNone(re.fullmatch(pattern, settings["container_name"]))
+                self.assertIsNone(re.fullmatch(pattern, settings["container_name"] + "-other"))
+                self.assertIsNone(re.fullmatch(pattern, "other-" + settings["container_name"]))
+                for label in ["infra.managed=true", f"infra.service={service}", f"infra.owner={os.getuid()}"]:
+                    self.assertIn("label=" + label, commands[0])
+
     def test_deploy_is_idempotent_and_config_changes_restart(self):
         for _ in range(2):
             result = self.command("tbg", "deploy")
@@ -183,6 +204,8 @@ sys.exit(code)
         self.assertEqual(self.command("tbg", "deploy").returncode, 0)
         unit = self.private / "containers/systemd/infra-tbg.container"
         original = unit.read_text()
+        override = self.private / "systemd/user/infra-tbg.service.d/20-infra-ownership.conf"
+        previous_override = override.read_text()
         self.settings["tbg"]["image_ref"] = "sha256:" + "b" * 64
         self.write_config()
         state = json.loads(self.state.read_text())
@@ -190,6 +213,7 @@ sys.exit(code)
         self.state.write_text(json.dumps(state))
         self.assertNotEqual(self.command("tbg", "deploy").returncode, 0)
         self.assertEqual(unit.read_text(), original)
+        self.assertEqual(override.read_text(), previous_override)
 
     def test_boot_install_uses_socket_without_restarting_all_containers(self):
         result = self.command("podman", "install")

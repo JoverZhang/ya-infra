@@ -8,6 +8,8 @@ Use `python3 checks/managed-services` for native-unit rendering, resource guards
 and deployment rollback; it uses fake engine/systemd commands and the real Quadlet
 generator. `python3 checks/boot-isolation` uses two disposable containers and a
 transient user unit to check the installed boot transport and failure isolation.
+`python3 checks/native-ownership <cached-image>` checks native collision refusal
+and cleanup with a disposable container and user unit; the image needs `/bin/sleep`.
 Run these commands from `deployments/`, or prefix their paths with `deployments/`
 from the repository root. The CLI check exercises both Just entry points and
 prints a JSON result to stdout for change evidence.
