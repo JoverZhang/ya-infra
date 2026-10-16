@@ -37,13 +37,16 @@ def private_directory(path):
     path.chmod(0o700)
 
 
-def wait_http_ready(url, timeout, error):
+def wait_http_ready(url, timeout, error, *, status=200):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=2) as response:
-                if response.status == 200:
+                if response.status == status:
                     return
+        except urllib.error.HTTPError as response:
+            if response.code == status:
+                return
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             pass
         time.sleep(1)

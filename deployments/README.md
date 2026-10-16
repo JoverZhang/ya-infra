@@ -1,8 +1,7 @@
 # User infrastructure
 
-Rootless Podman deployments for isolated Paseo/Codex environments, with a shared
-browser UI and public access through Cloudflare Tunnel. Browserlab remains
-outside the managed scope.
+Rootless Podman deployments for Paseo/Codex, its shared browser UI and Cloudflare
+gateway, plus the Telegram gateway and Browserlab.
 
 ## Configure and inspect
 
@@ -16,6 +15,7 @@ cp deployments/config.example.toml config.toml
 just svc
 just svc paseo status
 just svc paseo pair --list
+just svc podman install
 ```
 
 These examples run from the repository root. The root justfile forwards to this
@@ -27,8 +27,9 @@ names and user-level credentials/state intact.
 The public interface is `just svc <module> <action> ...` and
 `just gateway <action> ...`; module help supplies the available actions.
 Switching configuration files retains the same Linux-user container names,
-credentials and state namespace. Existing Podman socket, restart service and
-user lingering are prerequisites. Python 3.11+, Bash and Just are required.
+credentials and state namespace. The [runtime installer](services/podman/README.md)
+configures socket-based boot recovery; user lingering must be enabled.
+Python 3.11+, Bash and Just are required; tbg and Browserlab also use Podman Quadlet.
 
 ## Extend
 
