@@ -6,6 +6,9 @@ argument lists and live values.
 
 | Task | Read |
 | --- | --- |
+| Boot recovery, native user units, legacy container adoption | [Runtime](services/podman/README.md) |
+| Telegram gateway, notification bindings, gateway image upgrades | [TBG](services/tbg/README.md) |
+| Browser profile, CDP relay, browser image upgrades | [Browserlab](services/browserlab/README.md) |
 | Instances, login, backend image upgrades | [Paseo](services/paseo/README.md) |
 | Browser connections, shared UI, frontend upgrades | [Web](services/paseo-web/README.md) |
 | Routes, DNS, management-token failures | [Gateway](gateway/README.md) |

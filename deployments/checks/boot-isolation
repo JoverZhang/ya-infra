@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Reproduce boot failure with two disposable containers and a transient unit.
+
+Failures covered: a bad bind mount kills a successfully started neighbour,
+errors get hidden, or the check accidentally starts unrelated containers.
+The effective boot command is used with only the two fixture names. Socket
+transport is also required: newly created containers on recent Podman versions
+can survive the local starter even when legacy container monitors cannot.
+"""
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from infra_config import section
+from podman import engine
+
+
+def main():
+    prefix = f"infra-boot-check-{os.getpid()}-{time.time_ns()}"
+    names = [prefix + "-good", prefix + "-bad"]
+    unit = prefix + ".service"
+    created = []
+    with tempfile.TemporaryDirectory(prefix="infra-boot-") as directory:
+        mount = Path(directory) / "mount"
+        mount.mkdir()
+        image = section("services", "paseo", "versions")["image_ref"]
+        try:
+            for name in names:
+                args = ["create", "--name", name, "--network=none", "--read-only", "--cgroups=no-conmon",
+                        "--image-volume=ignore", "--restart=no", "--cap-drop=all",
+                        "--entrypoint=/bin/sh", "--label=infra.check=boot-isolation"]
+                if name == names[1]:
+                    args += ["-v", f"{mount}:/fixture:ro"]
+                engine(*args, image, "-c", "sleep 300")
+                created.append(name)
+            mount.rename(mount.with_name("moved"))
+            show = subprocess.check_output(
+                ["systemctl", "--user", "show", "podman-restart.service", "-p", "ExecStart", "--value"],
+                text=True)
+            command = shlex.split(re.search(r"argv\[\]=(.*?); ignore_errors=", show)[1])
+            command = [arg for arg in command[:command.index("start") + 1] if arg != "$LOGGING"]
+            command = [arg.replace("%t", f"/run/user/{os.getuid()}") for arg in command]
+            result = subprocess.run(
+                ["systemd-run", "--user", "--quiet", "--wait", "--collect", "--unit", unit,
+                 "--property=Type=oneshot", "--property=RemainAfterExit=yes", "--property=KillMode=control-group",
+                 "--property=TimeoutStopSec=2", "--", *command, *names],
+                capture_output=True, text=True, timeout=20)
+            subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True, timeout=8)
+            alive = engine("exec", names[0], "/bin/true", check=False)
+            evidence = {"check": "boot-isolation", "failed_start_visible": result.returncode != 0,
+                        "healthy_container_usable": alive.returncode == 0,
+                        "transport": "socket" if "--remote" in command else "local"}
+            print(json.dumps(evidence))
+            return 0 if (evidence["failed_start_visible"] and evidence["healthy_container_usable"]
+                         and evidence["transport"] == "socket") else 1
+        finally:
+            subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True)
+            for name in reversed(created):
+                engine("rm", "--force", "--ignore", name, check=False)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

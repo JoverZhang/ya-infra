@@ -4,6 +4,12 @@ Use the smallest check set that exercises the changed interface. Start with
 `python3 checks/cli` for command/configuration changes and `python3 checks/gateway`
 for routing/controller changes; both use isolated fixtures without live deployments
 or cloud writes.
+Use `python3 checks/managed-services` for native-unit rendering, resource guards
+and deployment rollback; it uses fake engine/systemd commands and the real Quadlet
+generator. `python3 checks/boot-isolation` uses two disposable containers and a
+transient user unit to check the installed boot transport and failure isolation.
+`python3 checks/native-ownership <cached-image>` checks native collision refusal
+and cleanup with a disposable container and user unit; the image needs `/bin/sleep`.
 Run these commands from `deployments/`, or prefix their paths with `deployments/`
 from the repository root. The CLI check exercises both Just entry points and
 prints a JSON result to stdout for change evidence.
@@ -15,6 +21,8 @@ offline checks of missing-volume, replacement and adoption safeguards.
 | Check | Effect |
 | --- | --- |
 | `just svc paseo-web verify` | Local runtime inspection |
+| `just svc tbg verify` | Local HTTP protocol probe; no Telegram messages |
+| `just svc browserlab verify` | Local desktop and CDP HTTP probes |
 | `just gateway verify <route>` | Real HTTPS/authentication/WebSocket probes; records local verification state, without cloud writes |
 | `just svc paseo verify` | Calls deploy, writes temporary markers and restarts `demo`; inspects other running instances |
 | `just svc cloudflare-tunnel verify` | Calls deploy and checks idempotence; can replace a container if its specification differs |
