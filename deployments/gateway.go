@@ -7,14 +7,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/http"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/JoverZhang/ya-infra/deployments/internal/host"
 )
@@ -38,7 +38,9 @@ type gatewayController struct {
 type routePlan struct {
 	before, config           map[string]any
 	records                  []map[string]any
+	dnsTarget                string
 	ingressChange, dnsChange bool
+	observed                 bool
 }
 
 func (g *gatewayController) readState() (map[string]routeRecord, error) {
@@ -70,11 +72,17 @@ func clone(value map[string]any) map[string]any {
 }
 func (g *gatewayController) plan(r Route) (routePlan, error) {
 	var p routePlan
+	p.dnsTarget = g.client.gateway.TunnelID + ".cfargotunnel.com"
 	var err error
 	p.before, err = g.client.configuration()
 	if err != nil {
 		return p, err
 	}
+	p.records, err = g.client.records(r.Hostname)
+	if err != nil {
+		return p, err
+	}
+	p.observed = true
 	original, ok := p.before["config"].(map[string]any)
 	if !ok {
 		return p, errors.New("Tunnel configuration is missing; configure a catch-all rule first")
@@ -99,10 +107,11 @@ func (g *gatewayController) plan(r Route) (routePlan, error) {
 	}
 	record, known := state[r.Hostname]
 	target := g.client.gateway.TunnelID + ".cfargotunnel.com"
-	owned := known && record.Gateway == r.Gateway && record.Cname == target
-	if known && !owned {
+	sameOwner := known && record.Gateway == r.Gateway && record.Cname == target
+	if known && !sameOwner {
 		return p, errors.New("hostname belongs to another saved Gateway or Tunnel")
 	}
+	owned := sameOwner && record.Phase != "absent"
 	match := -1
 	for i, item := range ingress {
 		rule := item.(map[string]any)
@@ -119,10 +128,6 @@ func (g *gatewayController) plan(r Route) (routePlan, error) {
 		if rule["service"] != record.Origin && (record.DesiredOrigin == "" || rule["service"] != record.DesiredOrigin) {
 			return p, errors.New("owned hostname has external origin changes; inspect before applying")
 		}
-	}
-	p.records, err = g.client.records(r.Hostname)
-	if err != nil {
-		return p, err
 	}
 	if len(p.records) > 1 {
 		return p, errors.New("hostname has multiple DNS records")
@@ -199,6 +204,9 @@ func (g *gatewayController) apply(r Route) error {
 		return err
 	}
 	record := state[r.Hostname]
+	if record.Phase == "absent" {
+		record = routeRecord{}
+	}
 	record.Gateway = r.Gateway
 	record.Cname = g.client.gateway.TunnelID + ".cfargotunnel.com"
 	record.VerifiedAt = ""
@@ -423,11 +431,7 @@ func gateway(args []string) error {
 			default:
 				var p routePlan
 				p, operationErr = g.plan(r)
-				if operationErr == nil {
-					fmt.Printf("%s: ingress_change=%t dns_change=%t desired=%s\n", r.Hostname, p.ingressChange, p.dnsChange, r.State)
-				} else if action == "status" {
-					fmt.Println(r.Hostname + ": remote state unknown")
-				}
+				reportRoute(os.Stdout, action, r, p, operationErr)
 			}
 			if operationErr != nil {
 				failures = append(failures, fmt.Errorf("%s: %w", r.Hostname, operationErr))
@@ -449,14 +453,59 @@ func verifyRoute(r Route) error {
 	if r.State == "absent" {
 		return errors.New("public verification requires state: present")
 	}
-	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Get("https://" + r.Hostname + r.ProbePath)
-	if err != nil {
-		return errors.New("public HTTP connection failed")
+	return host.Probe("https://"+r.Hostname+r.ProbePath, r.ProbeStatus)
+}
+
+// Print only managed fields. Provider options and URL credentials stay private.
+func reportRoute(out io.Writer, action string, r Route, p routePlan, conflict error) {
+	if !p.observed {
+		fmt.Fprintln(out, r.Hostname+": remote state unknown")
+		return
 	}
-	defer response.Body.Close()
-	if response.StatusCode != r.ProbeStatus {
-		return fmt.Errorf("public HTTP status %d; expected %d", response.StatusCode, r.ProbeStatus)
+	origins := []string{}
+	if config, ok := p.before["config"].(map[string]any); ok {
+		if rules, ok := config["ingress"].([]any); ok {
+			for _, entry := range rules {
+				rule, ok := entry.(map[string]any)
+				if !ok || rule["hostname"] != r.Hostname {
+					continue
+				}
+				raw, _ := rule["service"].(string)
+				u, err := url.Parse(raw)
+				value := "[non-HTTP origin]"
+				if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+					value = u.Scheme + "://" + u.Host
+				}
+				origins = append(origins, value)
+			}
+		}
 	}
-	return nil
+	desired := r.Service
+	if r.State == "absent" {
+		desired = "absent"
+	}
+	fmt.Fprintf(out, "%s: origin observed=%q desired=%q\n", r.Hostname, origins, desired)
+	fmt.Fprintf(out, "  DNS observed_records=%d", len(p.records))
+	for _, record := range p.records {
+		kind, _ := record["type"].(string)
+		if kind == "CNAME" {
+			content, _ := record["content"].(string)
+			if !dnsName.MatchString(strings.TrimSuffix(content, ".")) {
+				content = "[invalid hostname]"
+			}
+			fmt.Fprintf(out, " CNAME=%q proxied=%t", content, record["proxied"] == true)
+		} else {
+			fmt.Fprint(out, " [non-CNAME record]")
+		}
+	}
+	if r.State == "absent" {
+		fmt.Fprintln(out, " desired=absent")
+	} else {
+		fmt.Fprintf(out, " desired=CNAME:%s proxied=true\n", p.dnsTarget)
+	}
+	if conflict != nil {
+		fmt.Fprintln(out, "  conflict: inspect observed state before apply")
+	} else if action == "diff" {
+		fmt.Fprintf(out, "  changes: ingress=%t DNS=%t\n", p.ingressChange, p.dnsChange)
+	}
 }

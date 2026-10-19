@@ -31,8 +31,10 @@ Each integration check prints a compact evidence record. Save command, revision,
 and result in the PR. [Migration](../docs/migration.md) owns the additional live
 acceptance gates; fixture success does not prove reboot or production recovery.
 
-After importing the pinned app images into that disposable cluster, run
-`TestApplicationImages` with the same context option. It starts two new Paseo
-daemons, Web, and a Browserlab profile with temporary data. It tests native
-WebSocket access, separate workspaces, desktop/CDP readiness, read-only workspace
-mounts, and graceful shutdown. It does not use production login or bot credentials.
+After importing all pinned app images into that disposable cluster, run
+`TestApplicationImages` with the same context option and `sqlite3` on PATH. It
+starts two new Paseo daemons, Web, TBG with synthetic SQLite data, and a temporary
+Browserlab profile. It tests native WebSocket access, separate workspaces, the
+empty-database guard, Secret mounts, loopback API probes, desktop/CDP readiness,
+read-only workspace mounts, and graceful shutdown. TBG uses a fake token with
+Telegram access blocked. No production login or bot credentials are used.

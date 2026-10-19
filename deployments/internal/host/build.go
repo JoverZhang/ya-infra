@@ -42,7 +42,7 @@ func Probe(url string, status int) error {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Get(url)
 	if err != nil {
-		return errors.New("application HTTP connection failed")
+		return errors.New("HTTP connection failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != status {

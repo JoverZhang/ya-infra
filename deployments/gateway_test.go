@@ -262,3 +262,85 @@ func TestNamedGatewaysAndTwoRoutesToOneOrigin(t *testing.T) {
 		t.Fatal("another Gateway changed the first Gateway")
 	}
 }
+
+func TestDeletedRecordCannotClaimARecreatedIngress(t *testing.T) {
+	c, ctl, r := gatewayFixture(t)
+	if err := ctl.apply(r); err != nil {
+		t.Fatal(err)
+	}
+	r.State = "absent"
+	if err := ctl.apply(r); err != nil {
+		t.Fatal(err)
+	}
+	writes := len(c.writes)
+	c.config["ingress"] = append([]any{map[string]any{"hostname": r.Hostname, "service": r.Service}}, c.config["ingress"].([]any)...)
+	for _, state := range []string{"absent", "present"} {
+		r.State = state
+		if err := ctl.apply(r); err == nil {
+			t.Fatal("deleted record authorized an external recreation", state)
+		}
+	}
+	if len(c.writes) != writes {
+		t.Fatal("external ingress was changed")
+	}
+}
+
+func TestRecreatedRouteUsesNewOwnershipIntent(t *testing.T) {
+	_, ctl, r := gatewayFixture(t)
+	if err := ctl.apply(r); err != nil {
+		t.Fatal(err)
+	}
+	before, err := ctl.readState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.State = "absent"
+	if err := ctl.apply(r); err != nil {
+		t.Fatal(err)
+	}
+	r.State = "present"
+	if err := ctl.apply(r); err != nil {
+		t.Fatal(err)
+	}
+	after, err := ctl.readState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before[r.Hostname].DNSMarker == after[r.Hostname].DNSMarker {
+		t.Fatal("new generation reused a deleted ownership marker")
+	}
+}
+
+func TestGatewayReportsObservedDriftAndDesiredChanges(t *testing.T) {
+	c, ctl, r := gatewayFixture(t)
+	if err := ctl.apply(r); err != nil {
+		t.Fatal(err)
+	}
+	c.config["ingress"].([]any)[0].(map[string]any)["service"] = "http://foreign:80"
+	p, err := ctl.plan(r)
+	if err == nil {
+		t.Fatal("expected drift")
+	}
+	var out strings.Builder
+	reportRoute(&out, "status", r, p, err)
+	if !strings.Contains(out.String(), "http://foreign:80") || !strings.Contains(out.String(), r.Service) || !strings.Contains(out.String(), "conflict") || strings.Contains(out.String(), "unknown") {
+		t.Fatal(out.String())
+	}
+	out.Reset()
+	reportRoute(&out, "status", r, routePlan{}, fmt.Errorf("failed read"))
+	if !strings.Contains(out.String(), "unknown") {
+		t.Fatal(out.String())
+	}
+	out.Reset()
+	reportRoute(&out, "diff", r, p, err)
+	if !strings.Contains(out.String(), "DNS") || !strings.Contains(out.String(), "CNAME") {
+		t.Fatal(out.String())
+	}
+	c.config["ingress"].([]any)[0].(map[string]any)["service"] = "https://user:private@foreign:443/?token=private"
+	p, err = ctl.plan(r)
+	out.Reset()
+	reportRoute(&out, "status", r, p, err)
+	if strings.Contains(out.String(), "private") {
+		t.Fatal("remote credential leaked", out.String())
+	}
+}

@@ -4,6 +4,7 @@ package checks
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,7 +40,7 @@ func TestApplicationImages(t *testing.T) {
 	must(nil, "create", "namespace", namespace)
 	defer func() {
 		if t.Failed() {
-			for _, args := range [][]string{{"get", "events", "--sort-by=.lastTimestamp"}, {"logs", "deployment/browserlab", "--all-containers", "--tail=80"}} {
+			for _, args := range [][]string{{"get", "events", "--sort-by=.lastTimestamp"}, {"logs", "deployment/browserlab", "--all-containers", "--tail=80"}, {"logs", "deployment/tbg", "--all-containers", "--tail=80"}} {
 				out, _ := run(nil, args...)
 				t.Log(string(out))
 			}
@@ -135,5 +136,49 @@ func TestApplicationImages(t *testing.T) {
 	old = strings.TrimSpace(string(must(nil, "get", "pods", "-l", "app=browserlab", "-o", "jsonpath={.items[0].metadata.name}")))
 	must(nil, "scale", "deployment/browserlab", "--replicas=0")
 	must(nil, "wait", "--for=delete", "pod/"+old, "--timeout=45s")
-	t.Log(`{"paseo":"two daemons ready; separate files; native WebSocket; clean shutdown","web":"ready","browser":"desktop ready; CDP relay works; workspace read-only; clean shutdown"}`)
+	// Use the exact TBG image, synthetic SQLite data, and no Telegram network access.
+	database := filepath.Join(t.TempDir(), "gateway.sqlite")
+	command(t, os.Environ(), "sqlite3", database, "VACUUM;")
+	dbBytes, err := os.ReadFile(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "tbg-server"}, "stringData": map[string]string{"server.yaml": "listen: 127.0.0.1:18473\ndata_dir: /var/lib/tbg\ntelegram:\n  bot_token: disposable-invalid-token\nadmins: []\n"}})
+	apply(map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "database-fixture"}, "data": map[string]string{"gateway.sqlite": base64.StdEncoding.EncodeToString(dbBytes)}})
+	tbg := load("tbg", "deployment.yaml")[0]
+	pod = disposable(tbg)
+	pod["hostAliases"] = []any{map[string]any{"ip": "127.0.0.1", "hostnames": []string{"api.telegram.org"}}}
+	gateway := pod["containers"].([]any)[0].(map[string]any)
+	gateway["env"] = []any{map[string]any{"name": "HTTPS_PROXY", "value": "http://127.0.0.1:1"}, map[string]any{"name": "https_proxy", "value": "http://127.0.0.1:1"}, map[string]any{"name": "NO_PROXY", "value": ""}}
+	apply(tbg)
+	rejected := false
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		out, _ := run(nil, "get", "pods", "-l", "app=tbg", "-o", "jsonpath={.items[0].status.initContainerStatuses[0].lastState.terminated.exitCode}")
+		if string(out) == "1" {
+			rejected = true
+			break
+		}
+	}
+	if !rejected {
+		t.Fatal("empty database did not fail the init check")
+	}
+	must(nil, "scale", "deployment/tbg", "--replicas=0")
+	must(nil, "wait", "--for=delete", "pod", "-l", "app=tbg", "--timeout=45s")
+	pod["volumes"] = append(pod["volumes"].([]any), map[string]any{"name": "database-fixture", "secret": map[string]any{"secretName": "database-fixture"}})
+	restore := map[string]any{"name": "restore-fixture", "image": gateway["image"], "imagePullPolicy": "Never", "command": []string{"cp", "/fixture/gateway.sqlite", "/var/lib/tbg/gateway.sqlite"}, "volumeMounts": []any{map[string]any{"name": "data", "mountPath": "/var/lib/tbg"}, map[string]any{"name": "database-fixture", "mountPath": "/fixture", "readOnly": true}}}
+	pod["initContainers"] = append([]any{restore}, pod["initContainers"].([]any)...)
+	apply(tbg)
+	must(nil, "rollout", "status", "deployment/tbg", "--timeout=90s")
+	// A separate client in the same host network checks HTTP 405 without a notification.
+	probe := map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"name": "tbg-probe"}, "spec": map[string]any{"hostNetwork": true, "restartPolicy": "Never", "containers": []any{map[string]any{"name": "probe", "image": image, "imagePullPolicy": "Never", "command": []string{"curl", "--silent", "--show-error", "--output", "/dev/null", "--write-out", "%{http_code}", "http://127.0.0.1:18473/v1/whoami"}}}}}
+	apply(probe)
+	must(nil, "wait", "--for=jsonpath={.status.phase}=Succeeded", "pod/tbg-probe", "--timeout=60s")
+	if got := strings.TrimSpace(string(must(nil, "logs", "tbg-probe"))); got != "405" {
+		t.Fatal("TBG protocol probe", got)
+	}
+	old = strings.TrimSpace(string(must(nil, "get", "pods", "-l", "app=tbg", "-o", "jsonpath={.items[0].metadata.name}")))
+	must(nil, "scale", "deployment/tbg", "--replicas=0")
+	must(nil, "wait", "--for=delete", "pod/"+old, "--timeout=45s")
+
+	t.Log(`{"paseo":"two daemons ready; separate files; native WebSocket; clean shutdown","web":"ready","tbg":"empty database rejected; synthetic restore ready; Secret mount; loopback HTTP 405; clean shutdown; Telegram blocked","browser":"desktop ready; CDP relay works; workspace read-only; clean shutdown"}`)
 }
