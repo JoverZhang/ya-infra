@@ -176,6 +176,12 @@ func (g *gatewayController) apply(r Route) error {
 			return err
 		}
 		record, known := state[r.Hostname]
+		if known && r.State == "absent" && record.Phase != "absent" {
+			record.Phase = "absent"
+			record.DesiredOrigin = ""
+			state[r.Hostname] = record
+			return g.writeState(state)
+		}
 		if !known || record.Phase == "published" || record.Phase == "verified" || record.Phase == "absent" {
 			return nil
 		}

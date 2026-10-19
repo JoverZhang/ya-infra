@@ -344,3 +344,32 @@ func TestGatewayReportsObservedDriftAndDesiredChanges(t *testing.T) {
 		t.Fatal("remote credential leaked", out.String())
 	}
 }
+
+func TestNoOpDeletionReleasesOwnership(t *testing.T) {
+	c, ctl, r := gatewayFixture(t)
+	if err := ctl.apply(r); err != nil {
+		t.Fatal(err)
+	}
+	c.config["ingress"] = c.config["ingress"].([]any)[1:]
+	c.records = nil
+	c.version++
+	writes := len(c.writes)
+	r.State = "absent"
+	if err := ctl.apply(r); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ctl.readState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state[r.Hostname].Phase != "absent" {
+		t.Fatal("no-op deletion retained ownership")
+	}
+	if len(c.writes) != writes {
+		t.Fatal("no-op deletion wrote remote resources")
+	}
+	c.config["ingress"] = append([]any{map[string]any{"hostname": r.Hostname, "service": r.Service}}, c.config["ingress"].([]any)...)
+	if err := ctl.apply(r); err == nil {
+		t.Fatal("released ownership claimed a recreated rule")
+	}
+}
