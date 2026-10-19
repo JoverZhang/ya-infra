@@ -1,45 +1,38 @@
-# Verification
+# Checks
 
-Use the smallest check set that exercises the changed interface. Start with
-`python3 checks/cli` for command/configuration changes and `python3 checks/gateway`
-for routing/controller changes; both use isolated fixtures without live deployments
-or cloud writes.
-Use `python3 checks/managed-services` for native-unit rendering, resource guards
-and deployment rollback; it uses fake engine/systemd commands and the real Quadlet
-generator. `python3 checks/boot-isolation` uses two disposable containers and a
-transient user unit to check the installed boot transport and failure isolation.
-`python3 checks/native-ownership <cached-image>` checks native collision refusal
-and cleanup with a disposable container and user unit; the image needs `/bin/sleep`.
-Run these commands from `deployments/`, or prefix their paths with `deployments/`
-from the repository root. The CLI check exercises both Just entry points and
-prints a JSON result to stdout for change evidence.
-For backend storage/lifecycle changes, run `python3 checks/paseo-storage` for
-offline checks of missing-volume, replacement and adoption safeguards.
+Run from the repository root. Offline checks need Go; CLI integration also uses
+just when present. They use disposable files and a local HTTP provider fixture.
 
-## Runtime effects
+```sh
+go -C deployments test ./...
+go -C deployments vet ./...
+go -C deployments test -race ./...
+```
 
-| Check | Effect |
-| --- | --- |
-| `just svc paseo-web verify` | Local runtime inspection |
-| `just svc tbg verify` | Local HTTP protocol probe; no Telegram messages |
-| `just svc browserlab verify` | Local desktop and CDP HTTP probes |
-| `just gateway verify <route>` | Real HTTPS/authentication/WebSocket probes; records local verification state, without cloud writes |
-| `just svc paseo verify` | Calls deploy, writes temporary markers and restarts `demo`; inspects other running instances |
-| `just svc cloudflare-tunnel verify` | Calls deploy and checks idempotence; can replace a container if its specification differs |
-| `just svc paseo smoke <instance>` | Real Codex model usage and a temporary workspace file |
+Real rendering requires the pinned SOPS, age-keygen, Kustomize, and KSOPS binaries
+on PATH. It creates a temporary age key and removes plaintext on exit.
 
-Deployment specifications include manager/shared-runtime source as well as config/image
-identity. A source-only change can therefore replace a container on its next
-deploy and invalidate a verifier's unchanged-container expectation.
+```sh
+go -C deployments test -tags=integration ./checks -run TestEncryptedRendering -v
+```
 
-For backend/image changes, exercise runtime isolation/persistence and public
-connection behavior; add the Codex smoke check when agent execution is affected.
-A ready Tunnel edge alone does not establish origin delivery. Read `status` and
-probe the relevant Route to determine current availability.
+Cluster checks require an explicit **disposable** context and the local-path
+provisioner. They create a unique namespace, StorageClass, and retained PV. They
+test native apply/diff, Secret masking, config rollout, PVC deletion, and rebind.
+They remove their API resources. Retained bytes stay on the test node until the
+operator removes the disposable cluster. No production app credentials are used.
 
-## Evidence
+```sh
+go -C deployments test -tags=integration ./checks \
+  -run TestClusterApplyAndRetention -cluster-context=disposable -v
+```
 
-Record observations and limits in the change/commit report. Earlier deployment
-evidence is available with `git log -p -- checks/README.md`; it is historical,
-not a live-state guarantee. Exercise at least two live instances before claiming
-peer isolation.
+Each integration check prints a compact evidence record. Save command, revision,
+and result in the PR. [Migration](../docs/migration.md) owns the additional live
+acceptance gates; fixture success does not prove reboot or production recovery.
+
+After importing the pinned app images into that disposable cluster, run
+`TestApplicationImages` with the same context option. It starts two new Paseo
+daemons, Web, and a Browserlab profile with temporary data. It tests native
+WebSocket access, separate workspaces, desktop/CDP readiness, read-only workspace
+mounts, and graceful shutdown. It does not use production login or bot credentials.

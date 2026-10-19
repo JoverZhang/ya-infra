@@ -1,24 +1,14 @@
-# Agent entry
+# Deployments
 
-Read [README.md](README.md) once, then load only the documents relevant to the
-current task. Code, `config.example.toml` and module `--help` own field schemas,
-argument lists and live values.
+Kubernetes runs applications; SOPS protects source configuration; Gateway manages Cloudflare.
+Each `apps/<app>/` owns native resources, image inputs, and optional explicit Go hooks.
 
 | Task | Read |
 | --- | --- |
-| Boot recovery, native user units, legacy container adoption | [Runtime](services/podman/README.md) |
-| Telegram gateway, notification bindings, gateway image upgrades | [TBG](services/tbg/README.md) |
-| Browser profile, CDP relay, browser image upgrades | [Browserlab](services/browserlab/README.md) |
-| Instances, login, backend image upgrades | [Paseo](services/paseo/README.md) |
-| Browser connections, shared UI, frontend upgrades | [Web](services/paseo-web/README.md) |
-| Routes, DNS, management-token failures | [Gateway](gateway/README.md) |
-| Connector adoption, cutover, cloudflared upgrades | [Tunnel](services/cloudflare-tunnel/README.md) |
-| Choosing verification or evaluating a change | [Checks](checks/README.md) |
-
-Keep each decision or operational caveat in its owning document. Add a pointer
-when a task needs it; use source/config/help for inexpensive lookups. Public
-historical evidence belongs in Git history, outside the normal reading path.
-
-User-level state holds application state and locks. Keep task artifacts in
-the project's ignored `.infra/artifacts/` and development backups in
-`.infra/backups/`; use temporary directories for intermediate work.
+| First use, encrypted rendering | [README](README.md) |
+| Add an application | [Example](examples/app/kubernetes/) |
+| Host setup | [Bootstrap](bootstrap.go), [native server input](kubernetes/bootstrap/) |
+| Image, data, or app hooks | The app's `README.md`, `main.go`, and `images/` |
+| Tunnel or DNS | [Gateway](gateway/README.md) |
+| Validation | [Checks](checks/README.md) |
+| Existing deployment cutover or recovery | [Migration](docs/migration.md) |

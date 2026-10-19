@@ -10,3 +10,4 @@ auth.json
 config.toml
 infra.toml
 /.infra/
+/.bin/

@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: paseo-web}
+spec:
+  replicas: 0                     # Enable the stateless Web workload first during migration.
+  selector:
+    matchLabels: {app: paseo-web}
+  template:
+    metadata:
+      labels: {app: paseo-web}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 101
+        runAsGroup: 101
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: web
+          image: localhost/ya-infra-paseo-web@sha256:852ec4ec1a853f5775c3216f1e15f1064d6863dfc6c7d6157972f0ccdf65e734
+          imagePullPolicy: Never
+          ports: [{containerPort: 8080}]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+      volumes: [{name: tmp, emptyDir: {sizeLimit: 64Mi}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: paseo-demo}
+spec:
+  replicas: 0                     # Restore both volumes before enabling this daemon.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: paseo-demo}
+  template:
+    metadata:
+      labels: {app: paseo-demo, app.kubernetes.io/component: daemon}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: initialize
+          image: localhost/ya-infra-paseo-daemon@sha256:cb9a87d82233613cb717bcae8b9370a62fb13eeb00bead5c6f39993dca4765f5
+          imagePullPolicy: Never
+          command: [/opt/infra/initialize]
+          securityContext:
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL], add: [CHOWN, FOWNER, DAC_OVERRIDE]}
+          volumeMounts:
+            - {name: home, mountPath: /home/paseo}
+            - {name: workspace, mountPath: /workspace}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: "1", memory: 128Mi}
+      containers:
+        - name: daemon
+          image: localhost/ya-infra-paseo-daemon@sha256:cb9a87d82233613cb717bcae8b9370a62fb13eeb00bead5c6f39993dca4765f5
+          imagePullPolicy: Never
+          envFrom: [{secretRef: {name: paseo-demo}}]
+          env:
+            - {name: PASEO_DICTATION_ENABLED, value: "false"}
+            - {name: PASEO_VOICE_MODE_ENABLED, value: "false"}
+            - {name: PASEO_RELAY_ENABLED, value: "false"}
+          ports: [{containerPort: 6767}]
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: home, mountPath: /home/paseo}
+            - {name: workspace, mountPath: /workspace}
+            - {name: tmp, mountPath: /tmp}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "2", memory: 4Gi}
+          readinessProbe:
+            httpGet: {path: /api/health, port: 6767}
+          startupProbe:
+            httpGet: {path: /api/health, port: 6767}
+            periodSeconds: 2
+            failureThreshold: 60
+      volumes:
+        - name: home
+          persistentVolumeClaim: {claimName: paseo-demo-home}
+        - name: workspace
+          persistentVolumeClaim: {claimName: paseo-demo-workspace}
+        - name: tmp
+          emptyDir: {sizeLimit: 512Mi}

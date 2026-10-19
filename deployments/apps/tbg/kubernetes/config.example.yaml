@@ -1,0 +1,5 @@
+listen: 127.0.0.1:18473
+data_dir: /var/lib/tbg
+telegram:
+  bot_token: REPLACE_WITH_EXISTING_SERVER_CONFIGURATION
+admins: []
