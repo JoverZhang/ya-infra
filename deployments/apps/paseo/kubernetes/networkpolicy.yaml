@@ -24,3 +24,13 @@ spec:
         - ipBlock:
             cidr: ::/0
             except: ["::1/128", "fc00::/7", "fe80::/10", "ff00::/8"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: paseo-web}
+spec:
+  podSelector:
+    matchLabels: {app: paseo-web}
+  # Web serves static files; daemon connections originate in the user's browser.
+  policyTypes: [Egress]
+  egress: []

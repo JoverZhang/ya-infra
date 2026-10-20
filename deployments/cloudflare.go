@@ -131,20 +131,20 @@ func (c *cloudflareClient) zoneID() (string, error) {
 	c.zone = result[0].ID
 	return c.zone, nil
 }
-func (c *cloudflareClient) configuration() (map[string]any, error) {
-	var value map[string]any
+func (c *cloudflareClient) configuration() (tunnelConfiguration, error) {
+	var value tunnelConfiguration
 	err := c.request("GET", c.configurationPath(), nil, &value)
-	if err == nil && value["source"] != nil && value["source"] != "cloudflare" {
+	if err == nil && value.Source != "" && value.Source != "cloudflare" {
 		err = errors.New("gateway requires a remotely managed Tunnel")
 	}
 	return value, err
 }
-func (c *cloudflareClient) records(hostname string) ([]map[string]any, error) {
+func (c *cloudflareClient) records(hostname string) ([]dnsRecord, error) {
 	zone, err := c.zoneID()
 	if err != nil {
 		return nil, err
 	}
-	var records []map[string]any
+	var records []dnsRecord
 	err = c.request("GET", "/zones/"+zone+"/dns_records?"+url.Values{"name": {hostname}, "per_page": {"100"}}.Encode(), nil, &records)
 	return records, err
 }

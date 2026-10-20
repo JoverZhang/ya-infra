@@ -36,8 +36,9 @@ type gatewayController struct {
 	stateDir string
 }
 type routePlan struct {
-	before, config           map[string]any
-	records                  []map[string]any
+	before                   tunnelConfiguration
+	config                   tunnelConfig
+	records                  []dnsRecord
 	dnsTarget                string
 	ingressChange, dnsChange bool
 	observed                 bool
@@ -45,15 +46,19 @@ type routePlan struct {
 
 func (g *gatewayController) readState() (map[string]routeRecord, error) {
 	state := map[string]routeRecord{}
-	data, err := os.ReadFile(filepath.Join(g.stateDir, "routes.json"))
+	path := filepath.Join(g.stateDir, "routes.json")
+	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return state, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if json.Unmarshal(data, &state) != nil || state == nil {
-		return nil, errors.New("invalid Gateway ownership state; recover the saved state before applying")
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("decode Gateway ownership state %q: %w", path, err)
+	}
+	if state == nil {
+		return nil, fmt.Errorf("Gateway ownership state %q must be a JSON object", path)
 	}
 	return state, nil
 }
@@ -64,122 +69,114 @@ func (g *gatewayController) writeState(state map[string]routeRecord) error {
 	}
 	return host.WritePrivate(filepath.Join(g.stateDir, "routes.json"), append(data, '\n'))
 }
-func clone(value map[string]any) map[string]any {
-	data, _ := json.Marshal(value)
-	var result map[string]any
-	json.Unmarshal(data, &result)
-	return result
-}
-func (g *gatewayController) plan(r Route) (routePlan, error) {
-	var p routePlan
-	p.dnsTarget = g.client.gateway.TunnelID + ".cfargotunnel.com"
+func (g *gatewayController) plan(route Route) (routePlan, error) {
+	var plan routePlan
+	plan.dnsTarget = g.client.gateway.TunnelID + ".cfargotunnel.com"
 	var err error
-	p.before, err = g.client.configuration()
+	plan.before, err = g.client.configuration()
 	if err != nil {
-		return p, err
+		return plan, err
 	}
-	p.records, err = g.client.records(r.Hostname)
+	plan.records, err = g.client.records(route.Hostname)
 	if err != nil {
-		return p, err
+		return plan, err
 	}
-	p.observed = true
-	original, ok := p.before["config"].(map[string]any)
-	if !ok {
-		return p, errors.New("Tunnel configuration is missing; configure a catch-all rule first")
+	plan.observed = true
+	if plan.before.Config == nil {
+		return plan, errors.New("Tunnel configuration is missing; configure a catch-all rule first")
 	}
-	p.config = clone(original)
-	ingress, ok := p.config["ingress"].([]any)
-	if !ok || len(ingress) == 0 {
-		return p, errors.New("Tunnel ingress must contain a final catch-all rule")
+	original := *plan.before.Config
+	plan.config = original
+	// Only the managed service value changes; provider options remain untouched.
+	ingress := append([]ingressRule(nil), original.Ingress...)
+	if len(ingress) == 0 {
+		return plan, errors.New("Tunnel ingress must contain a final catch-all rule")
 	}
-	for i, item := range ingress {
-		rule, ok := item.(map[string]any)
-		if !ok || rule["service"] == nil {
-			return p, errors.New("invalid Tunnel ingress rule")
+	for i, rule := range ingress {
+		if rule.Service == "" {
+			return plan, errors.New("invalid Tunnel ingress rule")
 		}
-		if i == len(ingress)-1 && (rule["hostname"] != nil || rule["path"] != nil) {
-			return p, errors.New("Tunnel ingress must end with a catch-all rule")
+		if i == len(ingress)-1 && (rule.Hostname != nil || rule.Path != nil) {
+			return plan, errors.New("Tunnel ingress must end with a catch-all rule")
 		}
 	}
 	state, err := g.readState()
 	if err != nil {
-		return p, err
+		return plan, err
 	}
-	record, known := state[r.Hostname]
+	record, known := state[route.Hostname]
 	target := g.client.gateway.TunnelID + ".cfargotunnel.com"
-	sameOwner := known && record.Gateway == r.Gateway && record.Cname == target
+	sameOwner := known && record.Gateway == route.Gateway && record.Cname == target
 	if known && !sameOwner {
-		return p, errors.New("hostname belongs to another saved Gateway or Tunnel")
+		return plan, errors.New("hostname belongs to another saved Gateway or Tunnel")
 	}
 	owned := sameOwner && record.Phase != "absent"
 	match := -1
-	for i, item := range ingress {
-		rule := item.(map[string]any)
-		if rule["hostname"] != r.Hostname {
+	for i, rule := range ingress {
+		if rule.Hostname == nil || *rule.Hostname != route.Hostname {
 			continue
 		}
-		if match != -1 || rule["path"] != nil {
-			return p, errors.New("existing hostname has multiple entries or path rules")
+		if match != -1 || rule.Path != nil {
+			return plan, errors.New("existing hostname has multiple entries or path rules")
 		}
 		match = i
 		if !owned {
-			return p, errors.New("existing hostname has no saved ownership; import verified legacy state before applying")
+			return plan, errors.New("existing hostname has no saved ownership; import verified legacy state before applying")
 		}
-		if rule["service"] != record.Origin && (record.DesiredOrigin == "" || rule["service"] != record.DesiredOrigin) {
-			return p, errors.New("owned hostname has external origin changes; inspect before applying")
-		}
-	}
-	if len(p.records) > 1 {
-		return p, errors.New("hostname has multiple DNS records")
-	}
-	if len(p.records) == 1 {
-		dns := p.records[0]
-		content, _ := dns["content"].(string)
-		if !owned || dns["type"] != "CNAME" || strings.TrimSuffix(strings.ToLower(content), ".") != target || dns["proxied"] != true {
-			return p, errors.New("existing DNS is not the owned proxied Tunnel CNAME")
-		}
-		sameID := record.DNSID != "" && record.DNSID == dns["id"]
-		pending := record.DNSMarker != "" && record.DNSMarker == dns["comment"] && (record.Phase == "publishing" || record.Phase == "dns-pending")
-		if !sameID && !pending {
-			return p, errors.New("DNS identity differs from saved ownership; matching values do not prove ownership")
+		if rule.Service != record.Origin && (record.DesiredOrigin == "" || rule.Service != record.DesiredOrigin) {
+			return plan, errors.New("owned hostname has external origin changes; inspect before applying")
 		}
 	}
-	if r.State == "absent" {
-		if !owned && (match >= 0 || len(p.records) > 0) {
-			return p, errors.New("cannot delete an unowned route")
+	if len(plan.records) > 1 {
+		return plan, errors.New("hostname has multiple DNS records")
+	}
+	if len(plan.records) == 1 {
+		dns := plan.records[0]
+		if !owned || dns.Type != "CNAME" || strings.TrimSuffix(strings.ToLower(dns.Content), ".") != target || !dns.Proxied {
+			return plan, errors.New("existing DNS is not the owned proxied Tunnel CNAME")
+		}
+		sameID := record.DNSID != "" && record.DNSID == dns.ID
+		pending := record.DNSMarker != "" && record.DNSMarker == dns.Comment && (record.Phase == "publishing" || record.Phase == "dns-pending")
+		if dns.ID == "" || (!sameID && !pending) {
+			return plan, errors.New("DNS identity differs from saved ownership; matching values do not prove ownership")
+		}
+	}
+	if route.State == "absent" {
+		if !owned && (match >= 0 || len(plan.records) > 0) {
+			return plan, errors.New("cannot delete an unowned route")
 		}
 		if match >= 0 {
 			ingress = append(ingress[:match], ingress[match+1:]...)
 		}
-		p.dnsChange = len(p.records) > 0
+		plan.dnsChange = len(plan.records) > 0
 	} else {
 		if match >= 0 {
-			ingress[match].(map[string]any)["service"] = r.Service
+			ingress[match].Service = route.Service
 		} else {
-			ingress = append([]any{map[string]any{"hostname": r.Hostname, "service": r.Service}}, ingress...)
+			ingress = append([]ingressRule{{Hostname: &route.Hostname, Service: route.Service}}, ingress...)
 		}
-		p.dnsChange = len(p.records) == 0
+		plan.dnsChange = len(plan.records) == 0
 	}
-	p.config["ingress"] = ingress
-	p.ingressChange = !reflect.DeepEqual(original, p.config)
-	return p, nil
+	plan.config.Ingress = ingress
+	plan.ingressChange = !reflect.DeepEqual(original, plan.config)
+	return plan, nil
 }
 
-func (g *gatewayController) apply(r Route) error {
-	p, err := g.plan(r)
+func (g *gatewayController) apply(route Route) error {
+	plan, err := g.plan(route)
 	if err != nil {
 		return err
 	}
-	if !p.ingressChange && !p.dnsChange {
+	if !plan.ingressChange && !plan.dnsChange {
 		state, err := g.readState()
 		if err != nil {
 			return err
 		}
-		record, known := state[r.Hostname]
-		if known && r.State == "absent" && record.Phase != "absent" {
+		record, known := state[route.Hostname]
+		if known && route.State == "absent" && record.Phase != "absent" {
 			record.Phase = "absent"
 			record.DesiredOrigin = ""
-			state[r.Hostname] = record
+			state[route.Hostname] = record
 			return g.writeState(state)
 		}
 		if !known || record.Phase == "published" || record.Phase == "verified" || record.Phase == "absent" {
@@ -191,17 +188,23 @@ func (g *gatewayController) apply(r Route) error {
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(p.before, latest) {
+	if !reflect.DeepEqual(plan.before, latest) {
 		return errors.New("Tunnel changed since preview; rerun diff")
 	}
-	records, err := g.client.records(r.Hostname)
+	records, err := g.client.records(route.Hostname)
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(records, p.records) {
+	if !reflect.DeepEqual(records, plan.records) {
 		return errors.New("DNS changed since preview; rerun diff")
 	}
-	snapshot, _ := json.MarshalIndent(map[string]any{"tunnel": p.before, "dns": p.records}, "", "  ")
+	snapshot, err := json.MarshalIndent(struct {
+		Tunnel tunnelConfiguration `json:"tunnel"`
+		DNS    []dnsRecord         `json:"dns"`
+	}{plan.before, plan.records}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode Gateway recovery snapshot: %w", err)
+	}
 	if err = host.WritePrivate(filepath.Join(g.stateDir, "before-last-apply.json"), snapshot); err != nil {
 		return err
 	}
@@ -209,16 +212,21 @@ func (g *gatewayController) apply(r Route) error {
 	if err != nil {
 		return err
 	}
-	record := state[r.Hostname]
+	record := state[route.Hostname]
 	if record.Phase == "absent" {
 		record = routeRecord{}
 	}
-	record.Gateway = r.Gateway
+	record.Gateway = route.Gateway
 	record.Cname = g.client.gateway.TunnelID + ".cfargotunnel.com"
 	record.VerifiedAt = ""
+	// plan verified this identity, including recovery through the creation marker.
+	// Persist it before changing phase so a failed deletion remains retryable.
+	if len(plan.records) == 1 {
+		record.DNSID = plan.records[0].ID
+	}
 	record.Phase = "publishing"
-	record.DesiredOrigin = r.Service
-	if r.State == "absent" {
+	record.DesiredOrigin = route.Service
+	if route.State == "absent" {
 		record.Phase = "deleting"
 		record.DesiredOrigin = ""
 	}
@@ -227,14 +235,16 @@ func (g *gatewayController) apply(r Route) error {
 		if _, err = rand.Read(nonce[:]); err != nil {
 			return err
 		}
-		record.DNSMarker = "ya-infra/gateway:" + r.Gateway + ":" + hex.EncodeToString(nonce[:])
+		record.DNSMarker = "ya-infra/gateway:" + route.Gateway + ":" + hex.EncodeToString(nonce[:])
 	}
-	state[r.Hostname] = record
+	state[route.Hostname] = record
 	if err = g.writeState(state); err != nil {
 		return err
 	}
-	if p.ingressChange {
-		if err = g.client.request("PUT", g.client.configurationPath(), map[string]any{"config": p.config}, nil); err != nil {
+	if plan.ingressChange {
+		if err = g.client.request("PUT", g.client.configurationPath(), struct {
+			Config tunnelConfig `json:"config"`
+		}{plan.config}, nil); err != nil {
 			return err
 		}
 	}
@@ -242,33 +252,33 @@ func (g *gatewayController) apply(r Route) error {
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(observed["config"], p.config) {
+	if observed.Config == nil || !reflect.DeepEqual(*observed.Config, plan.config) {
 		return errors.New("Tunnel readback differs; inspect remote changes before retry")
 	}
-	if r.State == "present" {
-		record.Origin = r.Service
+	if route.State == "present" {
+		record.Origin = route.Service
 		record.DesiredOrigin = ""
 		record.Phase = "dns-pending"
 	}
-	state[r.Hostname] = record
+	state[route.Hostname] = record
 	if err = g.writeState(state); err != nil {
 		return err
 	}
 	// Recheck DNS after the Tunnel write. Preserve changes made by another operator.
-	records, err = g.client.records(r.Hostname)
+	records, err = g.client.records(route.Hostname)
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(records, p.records) {
+	if !reflect.DeepEqual(records, plan.records) {
 		return errors.New("DNS changed during Tunnel update; inspect before retry")
 	}
 	zone, err := g.client.zoneID()
 	if err != nil {
 		return err
 	}
-	if p.dnsChange {
-		if r.State == "absent" {
-			id, _ := p.records[0]["id"].(string)
+	if plan.dnsChange {
+		if route.State == "absent" {
+			id := plan.records[0].ID
 			if id == "" {
 				return errors.New("DNS record has no identity")
 			}
@@ -276,32 +286,32 @@ func (g *gatewayController) apply(r Route) error {
 				return err
 			}
 		} else {
-			body := map[string]any{"type": "CNAME", "name": r.Hostname, "content": record.Cname, "proxied": true, "ttl": 1, "comment": record.DNSMarker}
-			var created map[string]any
+			body := dnsRecord{Type: "CNAME", Name: route.Hostname, Content: record.Cname, Proxied: true, TTL: 1, Comment: record.DNSMarker}
+			var created dnsRecord
 			if err = g.client.request("POST", "/zones/"+zone+"/dns_records", body, &created); err != nil {
 				return err
 			}
-			record.DNSID, _ = created["id"].(string)
+			record.DNSID = created.ID
 		}
-	} else if len(p.records) == 1 {
-		record.DNSID, _ = p.records[0]["id"].(string)
+	} else if len(plan.records) == 1 {
+		record.DNSID = plan.records[0].ID
 	}
-	records, err = g.client.records(r.Hostname)
+	records, err = g.client.records(route.Hostname)
 	if err != nil {
 		return err
 	}
-	if r.State == "absent" {
+	if route.State == "absent" {
 		if len(records) != 0 {
 			return errors.New("DNS deletion readback failed")
 		}
 		record.Phase = "absent"
 	} else {
-		if len(records) != 1 || records[0]["id"] != record.DNSID || records[0]["type"] != "CNAME" || records[0]["content"] != record.Cname || records[0]["proxied"] != true {
+		if len(records) != 1 || records[0].ID != record.DNSID || records[0].Type != "CNAME" || records[0].Content != record.Cname || !records[0].Proxied {
 			return errors.New("DNS publication readback failed")
 		}
 		record.Phase = "published"
 	}
-	state[r.Hostname] = record
+	state[route.Hostname] = record
 	return g.writeState(state)
 }
 
@@ -324,8 +334,8 @@ func checkCredentials(c *cloudflareClient, routes []Route) error {
 	zoneOK := check("Zone / Zone / Read", func() error { _, err := c.zoneID(); return err })
 	check("Account / cloudflared / Read", func() error { _, err := c.configuration(); return err })
 	if zoneOK {
-		for _, r := range routes {
-			check("Zone / DNS / Read ("+r.Hostname+")", func() error { _, err := c.records(r.Hostname); return err })
+		for _, route := range routes {
+			check("Zone / DNS / Read ("+route.Hostname+")", func() error { _, err := c.records(route.Hostname); return err })
 		}
 	} else {
 		fmt.Println("SKIP Zone / DNS / Read: resolve the Zone lookup result first")
@@ -374,9 +384,9 @@ func gateway(args []string) error {
 		return err
 	}
 	grouped := map[string][]Route{}
-	for _, r := range declarations.Routes {
-		if len(args) == 1 || args[1] == r.Hostname {
-			grouped[r.Gateway] = append(grouped[r.Gateway], r)
+	for _, route := range declarations.Routes {
+		if len(args) == 1 || args[1] == route.Hostname {
+			grouped[route.Gateway] = append(grouped[route.Gateway], route)
 		}
 	}
 	if len(args) == 2 && len(grouped) == 0 {
@@ -421,26 +431,26 @@ func gateway(args []string) error {
 				return errors.New("another Gateway operation holds the lock")
 			}
 		}
-		for _, r := range grouped[name] {
+		for _, route := range grouped[name] {
 			var operationErr error
 			switch action {
 			case "apply":
-				operationErr = g.apply(r)
+				operationErr = g.apply(route)
 				if operationErr == nil {
-					fmt.Println(r.Hostname + ": applied")
+					fmt.Println(route.Hostname + ": applied")
 				}
 			case "verify":
-				operationErr = verifyRoute(r)
+				operationErr = verifyRoute(route)
 				if operationErr == nil {
-					fmt.Println(r.Hostname + ": public HTTP check passed")
+					fmt.Println(route.Hostname + ": public HTTP check passed")
 				}
 			default:
-				var p routePlan
-				p, operationErr = g.plan(r)
-				reportRoute(os.Stdout, action, r, p, operationErr)
+				var plan routePlan
+				plan, operationErr = g.plan(route)
+				reportRoute(os.Stdout, action, route, plan, operationErr)
 			}
 			if operationErr != nil {
-				failures = append(failures, fmt.Errorf("%s: %w", r.Hostname, operationErr))
+				failures = append(failures, fmt.Errorf("%s: %w", route.Hostname, operationErr))
 				if action == "apply" {
 					break
 				}
@@ -455,63 +465,58 @@ func gateway(args []string) error {
 	}
 	return errors.Join(failures...)
 }
-func verifyRoute(r Route) error {
-	if r.State == "absent" {
+func verifyRoute(route Route) error {
+	if route.State == "absent" {
 		return errors.New("public verification requires state: present")
 	}
-	return host.Probe("https://"+r.Hostname+r.ProbePath, r.ProbeStatus)
+	return host.Probe("https://"+route.Hostname+route.ProbePath, route.ProbeStatus)
 }
 
 // Print only managed fields. Provider options and URL credentials stay private.
-func reportRoute(out io.Writer, action string, r Route, p routePlan, conflict error) {
-	if !p.observed {
-		fmt.Fprintln(out, r.Hostname+": remote state unknown")
+func reportRoute(out io.Writer, action string, route Route, plan routePlan, conflict error) {
+	if !plan.observed {
+		fmt.Fprintln(out, route.Hostname+": remote state unknown")
 		return
 	}
 	origins := []string{}
-	if config, ok := p.before["config"].(map[string]any); ok {
-		if rules, ok := config["ingress"].([]any); ok {
-			for _, entry := range rules {
-				rule, ok := entry.(map[string]any)
-				if !ok || rule["hostname"] != r.Hostname {
-					continue
-				}
-				raw, _ := rule["service"].(string)
-				u, err := url.Parse(raw)
-				value := "[non-HTTP origin]"
-				if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-					value = u.Scheme + "://" + u.Host
-				}
-				origins = append(origins, value)
+	if plan.before.Config != nil {
+		for _, rule := range plan.before.Config.Ingress {
+			if rule.Hostname == nil || *rule.Hostname != route.Hostname {
+				continue
 			}
+			origin, err := url.Parse(rule.Service)
+			value := "[non-HTTP origin]"
+			if err == nil && (origin.Scheme == "http" || origin.Scheme == "https") {
+				value = origin.Scheme + "://" + origin.Host
+			}
+			origins = append(origins, value)
 		}
 	}
-	desired := r.Service
-	if r.State == "absent" {
+	desired := route.Service
+	if route.State == "absent" {
 		desired = "absent"
 	}
-	fmt.Fprintf(out, "%s: origin observed=%q desired=%q\n", r.Hostname, origins, desired)
-	fmt.Fprintf(out, "  DNS observed_records=%d", len(p.records))
-	for _, record := range p.records {
-		kind, _ := record["type"].(string)
-		if kind == "CNAME" {
-			content, _ := record["content"].(string)
+	fmt.Fprintf(out, "%s: origin observed=%q desired=%q\n", route.Hostname, origins, desired)
+	fmt.Fprintf(out, "  DNS observed_records=%d", len(plan.records))
+	for _, record := range plan.records {
+		if record.Type == "CNAME" {
+			content := record.Content
 			if !dnsName.MatchString(strings.TrimSuffix(content, ".")) {
 				content = "[invalid hostname]"
 			}
-			fmt.Fprintf(out, " CNAME=%q proxied=%t", content, record["proxied"] == true)
+			fmt.Fprintf(out, " CNAME=%q proxied=%t", content, record.Proxied)
 		} else {
 			fmt.Fprint(out, " [non-CNAME record]")
 		}
 	}
-	if r.State == "absent" {
+	if route.State == "absent" {
 		fmt.Fprintln(out, " desired=absent")
 	} else {
-		fmt.Fprintf(out, " desired=CNAME:%s proxied=true\n", p.dnsTarget)
+		fmt.Fprintf(out, " desired=CNAME:%s proxied=true\n", plan.dnsTarget)
 	}
 	if conflict != nil {
 		fmt.Fprintln(out, "  conflict: inspect observed state before apply")
 	} else if action == "diff" {
-		fmt.Fprintf(out, "  changes: ingress=%t DNS=%t\n", p.ingressChange, p.dnsChange)
+		fmt.Fprintf(out, "  changes: ingress=%t DNS=%t\n", plan.ingressChange, plan.dnsChange)
 	}
 }

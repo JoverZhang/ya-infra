@@ -11,12 +11,27 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/JoverZhang/ya-infra/deployments/internal/host"
 )
 
 var testCLI string
 
 func TestMain(m *testing.M) {
 	switch filepath.Base(os.Args[0]) {
+	case "bootstrap-local":
+		config := host.Config{Source: filepath.Join(os.Getenv("TEST_BOOTSTRAP_ROOT"), "source"), Context: "fixture"}
+		if err := bootstrapLocal(config); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	case "sudo", "systemctl", "k3s":
+		if err := runBootstrapFixture(filepath.Base(os.Args[0]), os.Args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	case "sops":
 		if os.Getenv("TEST_DECRYPT_FAIL") != "" {
 			os.Stderr.WriteString("private-provider-message")

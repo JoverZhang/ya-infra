@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ type cloudFixture struct {
 	writes          []string
 	failDNS         bool
 	lostDNSResponse bool
+	failDelete      bool
 	drift           bool
 	reads           int
 	version         int
@@ -76,6 +78,11 @@ func newCloud(t *testing.T) (*cloudFixture, *httptest.Server) {
 				}
 			}
 		case strings.HasSuffix(r.URL.Path, "/dns_records/record") && r.Method == "DELETE":
+			if c.failDelete {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprint(w, `{"success":false}`)
+				return
+			}
 			c.records = nil
 			c.writes = append(c.writes, "delete-dns")
 			result = map[string]any{"id": "record"}
@@ -228,6 +235,59 @@ func TestGatewayCompletesAnUncertainDNSWrite(t *testing.T) {
 	}
 	if !reflect.DeepEqual(c.writes, []string{"tunnel", "dns"}) {
 		t.Fatal(c.writes)
+	}
+}
+
+func TestGatewayRetriesDeletionAfterAnUncertainCreation(t *testing.T) {
+	cloud, controller, route := gatewayFixture(t)
+	cloud.lostDNSResponse = true
+	if err := controller.apply(route); err == nil {
+		t.Fatal("expected a lost creation response")
+	}
+	cloud.lostDNSResponse = false
+	cloud.failDelete = true
+	route.State = "absent"
+	if err := controller.apply(route); err == nil {
+		t.Fatal("expected deletion to fail")
+	}
+	cloud.failDelete = false
+	if err := controller.apply(route); err != nil {
+		t.Fatalf("retry deletion: %v", err)
+	}
+	state, err := controller.readState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state[route.Hostname].Phase != "absent" || len(cloud.records) != 0 {
+		t.Fatal("retry did not complete the deletion")
+	}
+	if !reflect.DeepEqual(cloud.writes, []string{"tunnel", "dns", "tunnel", "delete-dns"}) {
+		t.Fatal("retry repeated completed provider changes", cloud.writes)
+	}
+	t.Log("lost DNS response -> failed deletion -> successful retry; unrelated ingress retained")
+}
+
+func TestGatewayRejectsInvalidKnownProviderFields(t *testing.T) {
+	cloud, controller, route := gatewayFixture(t)
+	cloud.config["ingress"].([]any)[0].(map[string]any)["service"] = 42
+	if err := controller.apply(route); err == nil {
+		t.Fatal("accepted a non-string ingress service")
+	}
+	if len(cloud.writes) != 0 {
+		t.Fatal("invalid provider input caused a write", cloud.writes)
+	}
+}
+
+func TestGatewayStateErrorKeepsDecodeCause(t *testing.T) {
+	_, controller, _ := gatewayFixture(t)
+	path := filepath.Join(controller.stateDir, "routes.json")
+	if err := os.WriteFile(path, []byte(`{"app.example.com":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := controller.readState()
+	var syntaxError *json.SyntaxError
+	if !errors.As(err, &syntaxError) || !strings.Contains(err.Error(), path) {
+		t.Fatalf("missing ownership file or decode cause: %v", err)
 	}
 }
 

@@ -93,7 +93,10 @@ func TestEncryptedRendering(t *testing.T) {
 		return out
 	}
 	for _, dir := range []string{"examples/app/kubernetes", "kubernetes/cluster", "apps/paseo/kubernetes", "apps/tbg/kubernetes", "apps/browserlab/kubernetes"} {
-		render(dir)
+		resources := render(dir)
+		if dir == "apps/paseo/kubernetes" {
+			checkWebEgress(t, resources)
+		}
 	}
 	before := render("apps/tbg/kubernetes")
 	encrypt("apps/tbg/kubernetes", "config.example.yaml", "config.sops.yaml")
@@ -120,6 +123,65 @@ func TestEncryptedRendering(t *testing.T) {
 	}
 	evidence, _ := json.Marshal(map[string]any{"public_and_encrypted_apps": "rendered", "reencryption": "unchanged", "config_update": "Secret and workload reference changed", "missing_key": "failed before cluster access"})
 	t.Log(string(evidence))
+}
+
+func checkWebEgress(t *testing.T, data []byte) {
+	t.Helper()
+	type resource struct {
+		Kind     string
+		Metadata struct{ Name string }
+		Spec     struct {
+			Template struct {
+				Metadata struct{ Labels map[string]string }
+			}
+			PodSelector struct {
+				MatchLabels map[string]string `yaml:"matchLabels"`
+			} `yaml:"podSelector"`
+			PolicyTypes []string `yaml:"policyTypes"`
+			Egress      []any
+		}
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	var webLabels map[string]string
+	var policies []resource
+	for {
+		var item resource
+		if err := decoder.Decode(&item); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if item.Kind == "Deployment" && item.Metadata.Name == "paseo-web" {
+			webLabels = item.Spec.Template.Metadata.Labels
+		}
+		if item.Kind == "NetworkPolicy" {
+			policies = append(policies, item)
+		}
+	}
+	if len(webLabels) == 0 {
+		t.Fatal("rendered Paseo Web Pod labels are missing")
+	}
+	isolated := false
+	for _, policy := range policies {
+		matches := true
+		for name, value := range policy.Spec.PodSelector.MatchLabels {
+			matches = matches && webLabels[name] == value
+		}
+		if !matches {
+			continue
+		}
+		for _, kind := range policy.Spec.PolicyTypes {
+			if kind == "Egress" {
+				isolated = true
+				if len(policy.Spec.Egress) != 0 {
+					t.Fatal("rendered policy permits Web outbound connections", policy.Metadata.Name)
+				}
+			}
+		}
+	}
+	if !isolated {
+		t.Fatal("rendered Paseo Web has no egress isolation")
+	}
 }
 func secretIdentity(t *testing.T, data []byte) (string, string) {
 	t.Helper()

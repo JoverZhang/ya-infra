@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -127,7 +128,6 @@ func localConfiguration(config map[string]any, previousRoot string) ([]byte, err
 
 // Preserve unrelated entries and refuse collisions with a named local context.
 func mergeKubeconfig(existing, local map[string]any, name string) error {
-	local = clone(local)
 	for _, section := range []string{"clusters", "users", "contexts"} {
 		values, ok := local[section].([]any)
 		if !ok || len(values) != 1 {
@@ -137,14 +137,17 @@ func mergeKubeconfig(existing, local map[string]any, name string) error {
 		if !ok {
 			return errors.New("invalid local kubeconfig entry")
 		}
+		item = maps.Clone(item)
 		item["name"] = name
 		if section == "contexts" {
 			context, ok := item["context"].(map[string]any)
 			if !ok {
 				return errors.New("invalid kubeconfig context")
 			}
+			context = maps.Clone(context)
 			context["cluster"] = name
 			context["user"] = name
+			item["context"] = context
 		}
 		entries, _ := existing[section].([]any)
 		found := false
@@ -194,8 +197,33 @@ func bootstrap(args []string) error {
 	if err != nil {
 		return err
 	}
+	return bootstrapLocal(config)
+}
+
+func bootstrapLocal(config host.Config) error {
+	destination := os.Getenv("KUBECONFIG")
+	if destination == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("locate kubeconfig destination: %w", err)
+		}
+		destination = filepath.Join(home, ".kube", "config")
+	}
+	if strings.ContainsRune(destination, os.PathListSeparator) {
+		return errors.New("bootstrap needs one KUBECONFIG destination; kubectl can still use multiple files")
+	}
+	existing := map[string]any{}
+	old, err := os.ReadFile(destination)
+	if err == nil {
+		if yaml.Unmarshal(old, &existing) != nil || existing == nil {
+			// YAML decoder errors can contain credentials from the input.
+			return fmt.Errorf("invalid existing kubeconfig %q; expected a YAML mapping", destination)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	var options map[string]any
-	if err = host.Decrypt(filepath.Join(config.Source, "kubernetes", "bootstrap", "local.sops.yaml"), &options); err != nil {
+	if err := host.Decrypt(filepath.Join(config.Source, "kubernetes", "bootstrap", "local.sops.yaml"), &options); err != nil {
 		return err
 	}
 	if options == nil {
@@ -234,13 +262,15 @@ func bootstrap(args []string) error {
 	}
 	defer clear(data)
 	changed := !installed || !bytes.Equal(before, data)
+	const pendingRestart = target + ".restart-pending"
+	pending := exec.Command("sudo", "test", "-f", pendingRestart).Run() == nil
 	if installed {
 		out, err := exec.Command("sudo", "k3s", "--version").Output()
 		if err != nil || !bytes.Contains(out, []byte(serverVersion)) {
 			return errors.New("local server version differs; use the documented backup and upgrade procedure")
 		}
 	}
-	if changed {
+	if changed || pending {
 		temp, err := os.MkdirTemp("", "ya-infra-bootstrap-")
 		if err != nil {
 			return err
@@ -252,6 +282,11 @@ func bootstrap(args []string) error {
 		}
 		if err = host.Run("sudo", "install", "-d", "-m", "0700", "/etc/rancher/k3s"); err != nil {
 			return err
+		}
+		// Record intent before changing the file; keep it until the service has restarted.
+		// A retry must reconcile the running service even when the file already matches.
+		if err = host.Run("sudo", "touch", pendingRestart); err != nil {
+			return fmt.Errorf("save pending server restart: %w", err)
 		}
 		if err = host.Run("sudo", "install", "-m", "0600", input, target); err != nil {
 			return err
@@ -274,6 +309,9 @@ func bootstrap(args []string) error {
 				return err
 			}
 		}
+		if err = host.Run("sudo", "rm", pendingRestart); err != nil {
+			return fmt.Errorf("clear completed server restart: %w", err)
+		}
 	} else if exec.Command("systemctl", "is-active", "--quiet", "k3s").Run() != nil {
 		if err = host.Run("sudo", "systemctl", "start", "k3s"); err != nil {
 			return err
@@ -287,23 +325,6 @@ func bootstrap(args []string) error {
 	var localConfig map[string]any
 	if yaml.Unmarshal(raw, &localConfig) != nil {
 		return errors.New("invalid local kubeconfig")
-	}
-	home, _ := os.UserHomeDir()
-	destination := os.Getenv("KUBECONFIG")
-	if destination == "" {
-		destination = filepath.Join(home, ".kube", "config")
-	}
-	if strings.ContainsRune(destination, os.PathListSeparator) {
-		return errors.New("bootstrap needs one KUBECONFIG destination; kubectl can still use multiple files")
-	}
-	existing := map[string]any{}
-	old, err := os.ReadFile(destination)
-	if err == nil {
-		if yaml.Unmarshal(old, &existing) != nil {
-			return errors.New("invalid existing kubeconfig")
-		}
-	} else if !os.IsNotExist(err) {
-		return err
 	}
 	if err = mergeKubeconfig(existing, localConfig, config.Context); err != nil {
 		return err
