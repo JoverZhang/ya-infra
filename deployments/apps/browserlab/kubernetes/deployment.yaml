@@ -17,7 +17,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       initContainers:
         - name: restore-check
-          image: localhost/ya-infra-browserlab@sha256:612040bdde2ca0bc6c798bcfaa4f0eafa302c07c2c05ff49b78af4efd918867b
+          image: localhost/ya-infra-browserlab@sha256:17d056ffd9af51ab7eba5e327527aab2bc4ed567753fe0fc40843b2121f34d92
           imagePullPolicy: Never
           command: [/usr/local/bin/browserlab, prepare-profile]
           env: [{name: PUID, value: "1000"}, {name: PGID, value: "1000"}]
@@ -30,7 +30,7 @@ spec:
             capabilities: {drop: [ALL], add: [CHOWN, DAC_OVERRIDE, FOWNER]}
       containers:
         - name: browser
-          image: localhost/ya-infra-browserlab@sha256:612040bdde2ca0bc6c798bcfaa4f0eafa302c07c2c05ff49b78af4efd918867b
+          image: localhost/ya-infra-browserlab@sha256:17d056ffd9af51ab7eba5e327527aab2bc4ed567753fe0fc40843b2121f34d92
           imagePullPolicy: Never
           env:
             - {name: PUID, value: "1000"}
@@ -52,7 +52,7 @@ spec:
             failureThreshold: 90
             periodSeconds: 2
         - name: cdp
-          image: localhost/ya-infra-browserlab@sha256:612040bdde2ca0bc6c798bcfaa4f0eafa302c07c2c05ff49b78af4efd918867b
+          image: localhost/ya-infra-browserlab@sha256:17d056ffd9af51ab7eba5e327527aab2bc4ed567753fe0fc40843b2121f34d92
           imagePullPolicy: Never
           command: [/usr/local/bin/browserlab, relay, "0.0.0.0:9223", "127.0.0.1:9222"]
           readinessProbe:

@@ -12,14 +12,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"maps"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"syscall"
@@ -43,17 +41,20 @@ func fetch(url string, limit int64) ([]byte, error) {
 	c := &http.Client{Timeout: 2 * time.Minute}
 	r, err := c.Get(url)
 	if err != nil {
-		return nil, errors.New("upstream download failed")
+		return nil, host.HTTPFailure("download", url, err)
 	}
 	defer r.Body.Close()
 	if r.StatusCode != 200 {
-		return nil, fmt.Errorf("upstream download returned HTTP %d", r.StatusCode)
+		return nil, host.HTTPFailure("download", url, fmt.Errorf("HTTP %d", r.StatusCode))
 	}
 	data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if int64(len(data)) > limit {
-		return nil, errors.New("upstream download exceeds size limit")
+		return nil, host.HTTPFailure("download", url, errors.New("response exceeds size limit"))
 	}
-	return data, err
+	if err != nil {
+		return nil, host.HTTPFailure("read download", url, err)
+	}
+	return data, nil
 }
 func installClientTools() error {
 	dir := filepath.Join(host.XDG("XDG_DATA_HOME", ".local/share"), "ya-infra", "bin")
@@ -126,55 +127,6 @@ func localConfiguration(config map[string]any, previousRoot string) ([]byte, err
 	return yaml.Marshal(config)
 }
 
-// Preserve unrelated entries and refuse collisions with a named local context.
-func mergeKubeconfig(existing, local map[string]any, name string) error {
-	for _, section := range []string{"clusters", "users", "contexts"} {
-		values, ok := local[section].([]any)
-		if !ok || len(values) != 1 {
-			return errors.New("unexpected local kubeconfig structure")
-		}
-		item, ok := values[0].(map[string]any)
-		if !ok {
-			return errors.New("invalid local kubeconfig entry")
-		}
-		item = maps.Clone(item)
-		item["name"] = name
-		if section == "contexts" {
-			context, ok := item["context"].(map[string]any)
-			if !ok {
-				return errors.New("invalid kubeconfig context")
-			}
-			context = maps.Clone(context)
-			context["cluster"] = name
-			context["user"] = name
-			item["context"] = context
-		}
-		entries, _ := existing[section].([]any)
-		found := false
-		for _, value := range entries {
-			entry, ok := value.(map[string]any)
-			if !ok {
-				return errors.New("invalid existing kubeconfig")
-			}
-			if entry["name"] == name {
-				if !reflect.DeepEqual(entry, item) {
-					return errors.New("kubeconfig name collision; choose a new kube_context or reconcile the existing entry explicitly")
-				}
-				found = true
-			}
-		}
-		if !found {
-			existing[section] = append(entries, item)
-		}
-	}
-	existing["apiVersion"] = "v1"
-	existing["kind"] = "Config"
-	if existing["current-context"] == nil || existing["current-context"] == "" {
-		existing["current-context"] = name
-	}
-	return nil
-}
-
 func bootstrap(args []string) error {
 	flags := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	local := flags.Bool("local", false, "install or reconcile the local server using sudo")
@@ -212,12 +164,12 @@ func bootstrapLocal(config host.Config) error {
 	if strings.ContainsRune(destination, os.PathListSeparator) {
 		return errors.New("bootstrap needs one KUBECONFIG destination; kubectl can still use multiple files")
 	}
-	existing := map[string]any{}
+	existing := &kubeconfig{}
 	old, err := os.ReadFile(destination)
 	if err == nil {
-		if yaml.Unmarshal(old, &existing) != nil || existing == nil {
-			// YAML decoder errors can contain credentials from the input.
-			return fmt.Errorf("invalid existing kubeconfig %q; expected a YAML mapping", destination)
+		existing, err = decodeKubeconfig(old)
+		if err != nil {
+			return fmt.Errorf("invalid existing kubeconfig %q: %w", destination, err)
 		}
 	} else if !os.IsNotExist(err) {
 		return err
@@ -232,7 +184,7 @@ func bootstrapLocal(config host.Config) error {
 	const target = "/etc/rancher/k3s/ya-infra.yaml"
 	managed := exec.Command("sudo", "test", "-f", target).Run() == nil
 	_, binaryErr := exec.LookPath("k3s")
-	installed := binaryErr == nil
+	binaryPresent := binaryErr == nil
 	var before []byte
 	previousRoot := ""
 	if managed {
@@ -248,10 +200,10 @@ func bootstrapLocal(config host.Config) error {
 		if previousRoot == "" {
 			return errors.New("installed server configuration has no recorded data root")
 		}
-	} else if installed {
+	} else if binaryPresent {
 		return errors.New("existing local server is not owned by this bootstrap; inspect it before adoption")
 	}
-	if !installed {
+	if !binaryPresent {
 		if err = preflightLocal(options); err != nil {
 			return err
 		}
@@ -261,10 +213,19 @@ func bootstrapLocal(config host.Config) error {
 		return err
 	}
 	defer clear(data)
+	serviceState, err := exec.Command("systemctl", "show", "k3s.service", "--property=LoadState", "--value").Output()
+	if err != nil {
+		return fmt.Errorf("inspect local server service: %w", err)
+	}
+	state := strings.TrimSpace(string(serviceState))
+	if state != "loaded" && state != "not-found" {
+		return fmt.Errorf("local server service has unexpected load state %q; inspect systemctl status k3s", state)
+	}
+	installed := binaryPresent && state == "loaded"
 	changed := !installed || !bytes.Equal(before, data)
 	const pendingRestart = target + ".restart-pending"
 	pending := exec.Command("sudo", "test", "-f", pendingRestart).Run() == nil
-	if installed {
+	if binaryPresent {
 		out, err := exec.Command("sudo", "k3s", "--version").Output()
 		if err != nil || !bytes.Contains(out, []byte(serverVersion)) {
 			return errors.New("local server version differs; use the documented backup and upgrade procedure")
@@ -296,7 +257,9 @@ func bootstrapLocal(config host.Config) error {
 				return err
 			}
 		} else {
-			// The versioned upstream installer verifies the server binary checksum.
+			// A binary alone does not complete installation. Resume the pinned installer
+			// when an interrupted owned installation has not created its service.
+			// The upstream installer verifies the server binary checksum.
 			installer, err := fetch("https://raw.githubusercontent.com/k3s-io/k3s/"+serverVersion+"/install.sh", 1<<20)
 			if err != nil {
 				return err
@@ -322,9 +285,9 @@ func bootstrapLocal(config host.Config) error {
 		return errors.New("local kubeconfig is not ready; inspect systemctl status k3s and retry bootstrap")
 	}
 	defer clear(raw)
-	var localConfig map[string]any
-	if yaml.Unmarshal(raw, &localConfig) != nil {
-		return errors.New("invalid local kubeconfig")
+	localConfig, err := decodeKubeconfig(raw)
+	if err != nil {
+		return fmt.Errorf("invalid local kubeconfig: %w", err)
 	}
 	if err = mergeKubeconfig(existing, localConfig, config.Context); err != nil {
 		return err

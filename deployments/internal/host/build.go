@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,11 +43,28 @@ func Probe(url string, status int) error {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Get(url)
 	if err != nil {
-		return errors.New("HTTP connection failed")
+		return HTTPFailure("probe", url, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != status {
-		return fmt.Errorf("HTTP status %d; expected %d", response.StatusCode, status)
+		return HTTPFailure("probe", url, fmt.Errorf("HTTP status %d; expected %d", response.StatusCode, status))
 	}
 	return nil
+}
+
+// HTTPFailure retains transport causes without printing URL credentials or queries.
+func HTTPFailure(operation, address string, err error) error {
+	endpoint, parseErr := url.Parse(address)
+	if parseErr != nil {
+		return fmt.Errorf("%s: invalid HTTP URL", operation)
+	}
+	endpoint.User = nil
+	endpoint.RawQuery = ""
+	endpoint.ForceQuery = false
+	endpoint.Fragment = ""
+	var requestError *url.Error
+	if errors.As(err, &requestError) {
+		err = requestError.Err
+	}
+	return fmt.Errorf("%s %s: %w", operation, endpoint.String(), err)
 }

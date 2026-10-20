@@ -34,18 +34,32 @@ func TestBootstrapStorageAndKubeconfigGuards(t *testing.T) {
 	if _, err = localConfiguration(map[string]any{}, "/other/data"); err == nil {
 		t.Fatal("data-root change accepted")
 	}
-	original := map[string]any{"clusters": []any{map[string]any{"name": "other", "cluster": map[string]any{"server": "https://other"}}}, "current-context": "other"}
-	source := map[string]any{"clusters": []any{map[string]any{"name": "default", "cluster": map[string]any{"server": "https://127.0.0.1:6443"}}}, "users": []any{map[string]any{"name": "default", "user": map[string]any{"token": "fixture"}}}, "contexts": []any{map[string]any{"name": "default", "context": map[string]any{"cluster": "default", "user": "default"}}}}
+	existingData, err := os.ReadFile("testdata/kubeconfig-existing.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := decodeKubeconfig(existingData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localData, err := os.ReadFile("testdata/kubeconfig-local.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := decodeKubeconfig(localData)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err = mergeKubeconfig(original, source, "local"); err != nil {
 		t.Fatal(err)
 	}
-	if original["current-context"] != "other" || len(original["clusters"].([]any)) != 2 {
+	if original.CurrentContext != "other" || len(original.Clusters) != 2 || original.Extra["extensions"] == nil || (*original.Clusters[0].Cluster)["proxy-url"] != "http://proxy.example:8080" || original.Contexts[0].Context.Extra["namespace"] != "apps" {
 		t.Fatal(original)
 	}
 	if err = mergeKubeconfig(original, source, "local"); err != nil {
 		t.Fatal(err)
 	}
-	source["clusters"].([]any)[0].(map[string]any)["cluster"] = map[string]any{"server": "https://foreign"}
+	source.Clusters[0].Cluster = &map[string]any{"server": "https://foreign"}
 	if err = mergeKubeconfig(original, source, "local"); err == nil {
 		t.Fatal("context collision accepted")
 	}

@@ -224,11 +224,13 @@ func (g *gatewayController) apply(route Route) error {
 	if len(plan.records) == 1 {
 		record.DNSID = plan.records[0].ID
 	}
-	record.Phase = "publishing"
-	record.DesiredOrigin = route.Service
 	if route.State == "absent" {
 		record.Phase = "deleting"
-		record.DesiredOrigin = ""
+		// An uncertain Tunnel write can leave DesiredOrigin as the only ownership
+		// evidence. Keep it until deletion succeeds, including across retries.
+	} else {
+		record.Phase = "publishing"
+		record.DesiredOrigin = route.Service
 	}
 	if record.DNSMarker == "" {
 		var nonce [16]byte

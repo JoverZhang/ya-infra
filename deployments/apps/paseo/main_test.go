@@ -36,3 +36,30 @@ func TestVerifyRefusesRedirectedCredentials(t *testing.T) {
 		t.Fatalf("unsafe verify: %v", err)
 	}
 }
+
+func TestReusePublicSnapshot(t *testing.T) {
+	manifest, err := os.ReadFile("testdata/manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name  string
+		input []byte
+		valid bool
+	}{
+		{"matching versions", manifest, true},
+		{"different version", []byte(strings.Replace(string(manifest), paseoVersion, "0.0.0", 1)), false},
+		{"invalid version type", []byte(strings.Replace(string(manifest), `"`+paseoVersion+`"`, "123", 1)), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, "manifest.json"), test.input, 0600); err != nil {
+				t.Fatal(err)
+			}
+			err := prepareArtifacts(directory)
+			if (err == nil) != test.valid {
+				t.Fatalf("valid=%v, got %v", test.valid, err)
+			}
+		})
+	}
+}

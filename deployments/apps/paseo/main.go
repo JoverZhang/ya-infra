@@ -29,6 +29,17 @@ const paseoVersion = "0.9.1"
 const codexVersion = "0.159.2"
 const nodeVersion = "25.9.0"
 
+type artifactVersions struct {
+	Paseo string `json:"paseo_version"`
+	Codex string `json:"codex_version"`
+	Node  string `json:"node_version"`
+}
+
+type artifactManifest struct {
+	Versions artifactVersions  `json:"versions"`
+	SHA256   map[string]string `json:"sha256"`
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -278,14 +289,11 @@ func prepareArtifacts(target string) error {
 	}
 	manifest := filepath.Join(target, "manifest.json")
 	if data, err := os.ReadFile(manifest); err == nil {
-		var saved struct {
-			Versions map[string]any    `json:"versions"`
-			SHA256   map[string]string `json:"sha256"`
+		var saved artifactManifest
+		if err := json.Unmarshal(data, &saved); err != nil {
+			return fmt.Errorf("decode public snapshot manifest %q: %w", manifest, err)
 		}
-		if json.Unmarshal(data, &saved) != nil {
-			return errors.New("invalid snapshot manifest")
-		}
-		if saved.Versions["paseo_version"] != paseoVersion || saved.Versions["codex_version"] != codexVersion || saved.Versions["node_version"] != nodeVersion {
+		if saved.Versions != (artifactVersions{Paseo: paseoVersion, Codex: codexVersion, Node: nodeVersion}) {
 			return errors.New("snapshot version differs from the application pins")
 		}
 		actual, err := hashes(target)
@@ -371,7 +379,10 @@ func prepareArtifacts(target string) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := json.Marshal(map[string]any{"versions": map[string]string{"paseo_version": paseoVersion, "codex_version": codexVersion, "node_version": nodeVersion}, "sha256": sums})
+	encoded, err := json.Marshal(artifactManifest{
+		Versions: artifactVersions{Paseo: paseoVersion, Codex: codexVersion, Node: nodeVersion},
+		SHA256:   sums,
+	})
 	if err != nil {
 		return err
 	}

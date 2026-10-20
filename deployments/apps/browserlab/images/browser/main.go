@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/JoverZhang/ya-infra/deployments/internal/host"
 )
 
 func main() {
@@ -85,10 +88,13 @@ func relay(listen, target string) error {
 			defer client.Close()
 			upstream, err := net.DialTimeout("tcp", target, 5*time.Second)
 			if err != nil {
+				log.Printf("relay dial %s: %v", target, err)
 				return
 			}
 			defer upstream.Close()
 			done := make(chan struct{})
+			// Either peer can disconnect during a copy or half-close. Those errors
+			// end this connection; the listener remains available for the next client.
 			go func() {
 				io.Copy(upstream, client)
 				if tcp, ok := upstream.(*net.TCPConn); ok {
@@ -123,13 +129,14 @@ func prepareImage() error {
 	if err = os.WriteFile(path, data, 0755); err != nil {
 		return err
 	}
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Get("https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key")
+	const keyURL = "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Get(keyURL)
 	if err != nil {
-		return errors.New("NodeSource key download failed")
+		return host.HTTPFailure("download NodeSource key", keyURL, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return errors.New("NodeSource key download failed")
+		return host.HTTPFailure("download NodeSource key", keyURL, fmt.Errorf("HTTP %d", response.StatusCode))
 	}
 	if err = os.MkdirAll("/etc/apt/keyrings", 0755); err != nil {
 		return err

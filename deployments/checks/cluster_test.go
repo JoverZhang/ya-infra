@@ -47,8 +47,31 @@ func TestClusterApplyAndRetention(t *testing.T) {
 		must(data, "apply", "--server-side", "-f", "-")
 	}
 	must(nil, "create", "namespace", namespace)
-	defer kubectl(nil, "delete", "namespace", namespace, "--wait=false")
-	root, _ := filepath.Abs("..")
+	defer func() {
+		remove := func(kind, name string) {
+			out, err := kubectl(nil, "delete", kind, name, "--ignore-not-found", "--wait=true", "--timeout=90s")
+			if err != nil {
+				t.Errorf("cleanup %s/%s failed; inspect remaining resources: %v\n%s", kind, name, err, out)
+			}
+		}
+		// Release claims before removing retained PVs. The unique class identifies
+		// our volumes even if the test failed before reading the bound PV name.
+		remove("namespace", namespace)
+		selector := `jsonpath={.items[?(@.spec.storageClassName=="` + namespace + `")].metadata.name}`
+		volumes, err := kubectl(nil, "get", "pv", "-o", selector)
+		if err != nil {
+			t.Errorf("cleanup cannot list PVs for StorageClass %s: %v\n%s", namespace, err, volumes)
+		} else {
+			for _, volume := range strings.Fields(string(volumes)) {
+				remove("pv", volume)
+			}
+		}
+		remove("storageclass", namespace)
+	}()
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
 	temp := t.TempDir()
 	example := filepath.Join(root, "examples/app/kubernetes")
 	for _, name := range []string{"deployment.yaml", "service.yaml"} {
@@ -56,31 +79,57 @@ func TestClusterApplyAndRetention(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		os.WriteFile(filepath.Join(temp, name), data, 0600)
+		if err := os.WriteFile(filepath.Join(temp, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// Attach an encrypted Secret to the real public example through native Kustomize input.
 	deploymentPath := filepath.Join(temp, "deployment.yaml")
-	raw, _ := os.ReadFile(deploymentPath)
+	raw, err := os.ReadFile(deploymentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var deployment map[string]any
-	yaml.Unmarshal(raw, &deployment)
+	if err := yaml.Unmarshal(raw, &deployment); err != nil {
+		t.Fatal(err)
+	}
 	spec := deployment["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
 	spec["containers"].([]any)[0].(map[string]any)["envFrom"] = []any{map[string]any{"secretRef": map[string]any{"name": "check-config"}}}
-	raw, _ = yaml.Marshal(deployment)
-	os.WriteFile(deploymentPath, raw, 0600)
-	os.WriteFile(filepath.Join(temp, "kustomization.yaml"), []byte("resources: [deployment.yaml, service.yaml]\nnamespace: "+namespace+"\ngenerators: [ksops.yaml]\n"), 0600)
-	os.WriteFile(filepath.Join(temp, "ksops.yaml"), []byte("apiVersion: viaduct.ai/v1\nkind: ksops\nmetadata:\n  name: check-config\n  annotations:\n    config.kubernetes.io/function: |\n      exec:\n        path: ksops\nsecretFrom:\n  - metadata:\n      name: check-config\n      annotations:\n        kustomize.config.k8s.io/needs-hash: \"true\"\n    files: [config.yaml=config.sops.yaml]\n"), 0600)
+	raw, err = yaml.Marshal(deployment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(deploymentPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"kustomization.yaml", "ksops.yaml"} {
+		resource := fixtureResource(t, "cluster-"+name, "FIXTURE_NAMESPACE", namespace)
+		data, err := yaml.Marshal(resource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(temp, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	key := filepath.Join(temp, "age.key")
 	command(t, os.Environ(), "age-keygen", "-o", key)
 	recipient := strings.TrimSpace(string(command(t, os.Environ(), "age-keygen", "-y", key)))
 	env := append(os.Environ(), "SOPS_AGE_KEY_FILE="+key)
 	policy := filepath.Join(temp, "policy.yaml")
-	os.WriteFile(policy, []byte("creation_rules:\n  - age: "+recipient+"\n"), 0600)
+	if err := os.WriteFile(policy, []byte("creation_rules:\n  - age: "+recipient+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	render := func(value string) []byte {
 		t.Helper()
 		input := filepath.Join(temp, "config.yaml")
-		os.WriteFile(input, []byte("token: "+value+"\n"), 0600)
+		if err := os.WriteFile(input, []byte("token: "+value+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
 		encrypted := command(t, env, "sops", "--config", policy, "encrypt", "--age", recipient, input)
-		os.WriteFile(filepath.Join(temp, "config.sops.yaml"), encrypted, 0600)
+		if err := os.WriteFile(filepath.Join(temp, "config.sops.yaml"), encrypted, 0600); err != nil {
+			t.Fatal(err)
+		}
 		return command(t, env, "kustomize", "build", "--enable-alpha-plugins", "--enable-exec", temp)
 	}
 	first := render("fixture-one")
@@ -110,7 +159,9 @@ func TestClusterApplyAndRetention(t *testing.T) {
 	}
 	// Use a unique retained StorageClass. No existing class or volume is changed.
 	var classes struct{ Items []map[string]any }
-	json.Unmarshal(must(nil, "get", "storageclass", "-o", "json"), &classes)
+	if err := json.Unmarshal(must(nil, "get", "storageclass", "-o", "json"), &classes); err != nil {
+		t.Fatal(err)
+	}
 	var original map[string]any
 	for _, class := range classes.Items {
 		if class["provisioner"] == "rancher.io/local-path" {
@@ -126,12 +177,17 @@ func TestClusterApplyAndRetention(t *testing.T) {
 		class["parameters"] = original["parameters"]
 	}
 	apply(class)
-	defer kubectl(nil, "delete", "storageclass", namespace)
-	claim := map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "data", "namespace": namespace}, "spec": map[string]any{"storageClassName": namespace, "accessModes": []string{"ReadWriteOnce"}, "resources": map[string]any{"requests": map[string]any{"storage": "64Mi"}}}}
+	claim := fixtureResource(t, "retention-claim.yaml", "FIXTURE_NAMESPACE", namespace)
 	apply(claim)
-	image := spec["containers"].([]any)[0].(map[string]any)["image"]
+	image := spec["containers"].([]any)[0].(map[string]any)["image"].(string)
 	pod := func(name string, argv []string) map[string]any {
-		return map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"name": name, "namespace": namespace}, "spec": map[string]any{"restartPolicy": "Never", "containers": []any{map[string]any{"name": "check", "image": image, "command": argv, "volumeMounts": []any{map[string]any{"name": "data", "mountPath": "/data"}}}}, "volumes": []any{map[string]any{"name": "data", "persistentVolumeClaim": map[string]any{"claimName": "data"}}}}}
+		t.Helper()
+		command, err := json.Marshal(argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fixtureResource(t, "retention-pod.yaml", "FIXTURE_NAMESPACE", namespace,
+			"FIXTURE_NAME", name, "FIXTURE_IMAGE", image, "FIXTURE_COMMAND", string(command))
 	}
 	apply(pod("write", []string{"mkdir", "-p", "/data/retained"}))
 	must(nil, "-n", namespace, "wait", "--for=jsonpath={.status.phase}=Succeeded", "pod/write", "--timeout=120s")
@@ -139,7 +195,6 @@ func TestClusterApplyAndRetention(t *testing.T) {
 	if volume == "" {
 		t.Fatal("PVC did not bind")
 	}
-	defer kubectl(nil, "delete", "pv", volume, "--wait=false")
 	if string(must(nil, "get", "pv", volume, "-o", "jsonpath={.spec.persistentVolumeReclaimPolicy}")) != "Retain" {
 		t.Fatal("PV did not inherit retention")
 	}

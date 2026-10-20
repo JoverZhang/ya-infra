@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,12 +54,32 @@ func runBootstrapFixture(name string, args []string) error {
 		fmt.Println(serverVersion)
 		return nil
 	case "systemctl":
+		_, missing := os.Stat(filepath.Join(root, "service-missing"))
+		if args[0] == "show" {
+			if missing == nil {
+				fmt.Println("not-found")
+			} else {
+				fmt.Println("loaded")
+			}
+			return nil
+		}
+		if missing == nil {
+			return errors.New("k3s.service does not exist")
+		}
 		if args[0] == "is-active" {
 			return nil
 		}
 		if args[0] == "restart" || args[0] == "start" {
 			return record(args[0])
 		}
+	case "env":
+		if len(args) != 5 || args[0] != "INSTALL_K3S_VERSION="+serverVersion || args[3] != "sh" {
+			return fmt.Errorf("unexpected installer command: %v", args)
+		}
+		if err := record("install-service"); err != nil {
+			return err
+		}
+		return os.Remove(filepath.Join(root, "service-missing"))
 	case "test", "cat", "touch", "rm":
 		path, err := resolve(args[len(args)-1])
 		if err != nil {
@@ -105,6 +127,15 @@ func runBootstrapFixture(name string, args []string) error {
 	return fmt.Errorf("unexpected fixture command: %s %v", name, args)
 }
 
+type installerFixture struct{}
+
+func (installerFixture) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.String() != "https://raw.githubusercontent.com/k3s-io/k3s/"+serverVersion+"/install.sh" {
+		return nil, fmt.Errorf("unexpected fixture download: %s", request.URL)
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("fixture installer")), Header: make(http.Header)}, nil
+}
+
 func bootstrapFixture(t *testing.T) (string, []string) {
 	t.Helper()
 	root, env := cliFixture(t)
@@ -123,7 +154,10 @@ func bootstrapFixture(t *testing.T) (string, []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	localConfig := []byte("clusters:\n- name: default\n  cluster: {server: 'https://127.0.0.1:6443'}\nusers:\n- name: default\n  user: {token: fixture}\ncontexts:\n- name: default\n  context: {cluster: default, user: default}\n")
+	localConfig, err := os.ReadFile("testdata/kubeconfig-local.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
 	files := map[string][]byte{
 		"server.yaml":       before,
 		"server-kubeconfig": localConfig,
@@ -178,7 +212,7 @@ func TestBootstrapRetriesInterruptedChanges(t *testing.T) {
 }
 
 func TestBootstrapRejectsInvalidKubeconfigBeforeChanges(t *testing.T) {
-	for _, input := range []string{"null\n", "[]\n", "contexts: [\n"} {
+	for _, input := range []string{"null\n", "[]\n", "contexts: [\n", "clusters: {name: other}\n", "users: invalid\n", "contexts: [null]\n", "clusters: [{name: other, cluster: []}]\n"} {
 		t.Run(strings.TrimSpace(input), func(t *testing.T) {
 			root, env := bootstrapFixture(t)
 			if err := os.WriteFile(filepath.Join(root, "kubeconfig"), []byte(input), 0600); err != nil {
@@ -192,5 +226,44 @@ func TestBootstrapRejectsInvalidKubeconfigBeforeChanges(t *testing.T) {
 				t.Fatalf("invalid kubeconfig reached system changes: %v %s", err, operations)
 			}
 		})
+	}
+}
+
+func TestBootstrapFinishesInterruptedInstallation(t *testing.T) {
+	root, env := bootstrapFixture(t)
+	for _, path := range []string{"service-missing", "restart-pending"} {
+		if err := os.WriteFile(filepath.Join(root, path), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if output, err := runLocalBootstrap(root, append(env, "TEST_BOOTSTRAP_FAIL=install-service")); err == nil {
+		t.Fatalf("expected installer failure: %s", output)
+	}
+	if output, err := runLocalBootstrap(root, env); err != nil {
+		t.Fatalf("resume interrupted installation: %v %s", err, output)
+	}
+	before, err := os.ReadFile(filepath.Join(root, "operations"))
+	if err != nil || !strings.HasSuffix(string(before), "install-service\nclear-intent\n") {
+		t.Fatalf("installer did not complete: %v %s", err, before)
+	}
+	if output, err := runLocalBootstrap(root, env); err != nil {
+		t.Fatalf("unchanged bootstrap: %v %s", err, output)
+	}
+	after, err := os.ReadFile(filepath.Join(root, "operations"))
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("completed installation was not idempotent: %v %s", err, after)
+	}
+	t.Log("binary without service -> failed installation -> successful retry -> no further writes")
+}
+
+func TestBootstrapPreservesEmptyUserConfiguration(t *testing.T) {
+	root, env := bootstrapFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "kubeconfig"), []byte("users: [{name: anonymous, user: {}}]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if output, err := runLocalBootstrap(root, env); err != nil {
+			t.Fatalf("bootstrap attempt %d: %v %s", attempt, err, output)
+		}
 	}
 }

@@ -15,15 +15,17 @@ import (
 
 // These checks cross the HTTP and state-file boundaries with disposable provider state.
 type cloudFixture struct {
-	config          map[string]any
-	records         []map[string]any
-	writes          []string
-	failDNS         bool
-	lostDNSResponse bool
-	failDelete      bool
-	drift           bool
-	reads           int
-	version         int
+	config             map[string]any
+	records            []map[string]any
+	writes             []string
+	failDNS            bool
+	lostDNSResponse    bool
+	failDelete         bool
+	lostTunnelResponse bool
+	failTunnelWrite    bool
+	drift              bool
+	reads              int
+	version            int
 }
 
 func newCloud(t *testing.T) (*cloudFixture, *httptest.Server) {
@@ -39,11 +41,21 @@ func newCloud(t *testing.T) (*cloudFixture, *httptest.Server) {
 			result = []any{map[string]any{"id": "zone", "account": map[string]any{"id": strings.Repeat("a", 32)}}}
 		case strings.HasSuffix(r.URL.Path, "/configurations"):
 			if r.Method == "PUT" {
+				if c.failTunnelWrite {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					fmt.Fprint(w, `{"success":false}`)
+					return
+				}
 				var body struct{ Config map[string]any }
 				json.NewDecoder(r.Body).Decode(&body)
 				c.config = body.Config
 				c.version++
 				c.writes = append(c.writes, "tunnel")
+				if c.lostTunnelResponse {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					fmt.Fprint(w, `{"success":false}`)
+					return
+				}
 			}
 			c.reads++
 			if c.drift && c.reads == 2 {
@@ -99,6 +111,36 @@ func gatewayFixture(t *testing.T) (*cloudFixture, *gatewayController, Route) {
 	g := Gateway{Zone: "example.com", AccountID: strings.Repeat("a", 32), TunnelID: "00000000-0000-0000-0000-000000000001", APIToken: "test-credential-value"}
 	ctl := &gatewayController{client: &cloudflareClient{gateway: g, baseURL: s.URL, http: s.Client()}, stateDir: t.TempDir()}
 	return c, ctl, Route{Gateway: "public", Hostname: "app.example.com", Service: "http://app.apps.svc.cluster.local:8080", State: "present"}
+}
+
+func TestGatewayCancelUncertainTunnelCreation(t *testing.T) {
+	cloud, controller, route := gatewayFixture(t)
+	cloud.lostTunnelResponse = true
+	if err := controller.apply(route); err == nil {
+		t.Fatal("expected a lost Tunnel creation response")
+	}
+	cloud.lostTunnelResponse = false
+	cloud.failTunnelWrite = true
+	route.State = "absent"
+	route.Service = ""
+	if err := controller.apply(route); err == nil {
+		t.Fatal("expected a Tunnel deletion failure")
+	}
+	cloud.failTunnelWrite = false
+	if err := controller.apply(route); err != nil {
+		t.Fatalf("retry deletion after provider recovery: %v", err)
+	}
+	state, err := controller.readState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state[route.Hostname].Phase != "absent" || len(cloud.config["ingress"].([]any)) != 2 || len(cloud.records) != 0 {
+		t.Fatalf("incomplete deletion or unrelated ingress changed: %+v, %+v", state, cloud.config)
+	}
+	if err := controller.apply(route); err != nil {
+		t.Fatalf("repeat deletion: %v", err)
+	}
+	t.Log("lost Tunnel response -> failed deletion -> successful retry; unrelated ingress retained")
 }
 func TestGatewayOwnershipAndRetry(t *testing.T) {
 	c, ctl, r := gatewayFixture(t)

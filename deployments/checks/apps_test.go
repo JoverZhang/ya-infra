@@ -41,11 +41,13 @@ func TestApplicationImages(t *testing.T) {
 	defer func() {
 		if t.Failed() {
 			for _, args := range [][]string{{"get", "events", "--sort-by=.lastTimestamp"}, {"logs", "deployment/browserlab", "--all-containers", "--tail=80"}, {"logs", "deployment/tbg", "--all-containers", "--tail=80"}} {
-				out, _ := run(nil, args...)
-				t.Log(string(out))
+				out, err := run(nil, args...)
+				t.Logf("diagnostic %v: %v\n%s", args, err, out)
 			}
 		}
-		run(nil, "delete", "namespace", namespace, "--wait=false")
+		if out, err := run(nil, "delete", "namespace", namespace, "--wait=true", "--timeout=90s"); err != nil {
+			t.Errorf("cleanup namespace/%s failed; inspect remaining resources: %v\n%s", namespace, err, out)
+		}
 	}()
 	apply := func(resource map[string]any) {
 		t.Helper()
@@ -99,9 +101,14 @@ func TestApplicationImages(t *testing.T) {
 			daemon := pod["containers"].([]any)[0].(map[string]any)
 			delete(daemon, "envFrom")
 			daemon["env"] = append(daemon["env"].([]any), map[string]any{"name": "PASEO_PASSWORD", "value": "disposable-test-password"})
-			raw, _ := json.Marshal(resource)
+			raw, err := json.Marshal(resource)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var second map[string]any
-			json.Unmarshal(bytes.ReplaceAll(raw, []byte("paseo-demo"), []byte("paseo-second")), &second)
+			if err := json.Unmarshal(bytes.ReplaceAll(raw, []byte("paseo-demo"), []byte("paseo-second")), &second); err != nil {
+				t.Fatal(err)
+			}
 			apply(second)
 		}
 		apply(resource)
@@ -123,8 +130,8 @@ func TestApplicationImages(t *testing.T) {
 	browser := load("browserlab", "deployment.yaml")[0]
 	pod := disposable(browser)
 	init := pod["initContainers"].([]any)
-	image := init[0].(map[string]any)["image"]
-	marker := map[string]any{"name": "fixture-marker", "image": image, "imagePullPolicy": "Never", "command": []string{"touch", "/config/.ya-infra-restored"}, "volumeMounts": []any{map[string]any{"name": "profile", "mountPath": "/config"}}}
+	image := init[0].(map[string]any)["image"].(string)
+	marker := fixtureResource(t, "browser-marker.yaml", "FIXTURE_IMAGE", image)
 	pod["initContainers"] = append([]any{marker}, init...)
 	apply(browser)
 	must(nil, "rollout", "status", "deployment/browserlab", "--timeout=240s")
@@ -143,7 +150,7 @@ func TestApplicationImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apply(map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "tbg-server"}, "stringData": map[string]string{"server.yaml": "listen: 127.0.0.1:18473\ndata_dir: /var/lib/tbg\ntelegram:\n  bot_token: disposable-invalid-token\nadmins: []\n"}})
+	apply(fixtureResource(t, "tbg-server.yaml"))
 	apply(map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "database-fixture"}, "data": map[string]string{"gateway.sqlite": base64.StdEncoding.EncodeToString(dbBytes)}})
 	tbg := load("tbg", "deployment.yaml")[0]
 	pod = disposable(tbg)
@@ -165,12 +172,12 @@ func TestApplicationImages(t *testing.T) {
 	must(nil, "scale", "deployment/tbg", "--replicas=0")
 	must(nil, "wait", "--for=delete", "pod", "-l", "app=tbg", "--timeout=45s")
 	pod["volumes"] = append(pod["volumes"].([]any), map[string]any{"name": "database-fixture", "secret": map[string]any{"secretName": "database-fixture"}})
-	restore := map[string]any{"name": "restore-fixture", "image": gateway["image"], "imagePullPolicy": "Never", "command": []string{"cp", "/fixture/gateway.sqlite", "/var/lib/tbg/gateway.sqlite"}, "volumeMounts": []any{map[string]any{"name": "data", "mountPath": "/var/lib/tbg"}, map[string]any{"name": "database-fixture", "mountPath": "/fixture", "readOnly": true}}}
+	restore := fixtureResource(t, "tbg-restore.yaml", "FIXTURE_IMAGE", gateway["image"].(string))
 	pod["initContainers"] = append([]any{restore}, pod["initContainers"].([]any)...)
 	apply(tbg)
 	must(nil, "rollout", "status", "deployment/tbg", "--timeout=90s")
 	// A separate client in the same host network checks HTTP 405 without a notification.
-	probe := map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"name": "tbg-probe"}, "spec": map[string]any{"hostNetwork": true, "restartPolicy": "Never", "containers": []any{map[string]any{"name": "probe", "image": image, "imagePullPolicy": "Never", "command": []string{"curl", "--silent", "--show-error", "--output", "/dev/null", "--write-out", "%{http_code}", "http://127.0.0.1:18473/v1/whoami"}}}}}
+	probe := fixtureResource(t, "tbg-probe.yaml", "FIXTURE_IMAGE", image)
 	apply(probe)
 	must(nil, "wait", "--for=jsonpath={.status.phase}=Succeeded", "pod/tbg-probe", "--timeout=60s")
 	if got := strings.TrimSpace(string(must(nil, "logs", "tbg-probe"))); got != "405" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ var testCLI string
 func TestMain(m *testing.M) {
 	switch filepath.Base(os.Args[0]) {
 	case "bootstrap-local":
+		http.DefaultTransport = installerFixture{}
 		config := host.Config{Source: filepath.Join(os.Getenv("TEST_BOOTSTRAP_ROOT"), "source"), Context: "fixture"}
 		if err := bootstrapLocal(config); err != nil {
 			fmt.Fprintln(os.Stderr, err)
