@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/JoverZhang/ya-infra/deployments/internal/host"
 )
 
 type cloudflareClient struct {
@@ -76,7 +78,7 @@ func (c *cloudflareClient) request(method, path string, body any, out any) error
 	response, err := c.http.Do(req)
 	endpoint := strings.SplitN(path, "?", 2)[0]
 	if err != nil {
-		return fmt.Errorf("Cloudflare %s %s did not complete; read current state before retry", method, endpoint)
+		return fmt.Errorf("%w; read current state before retry", host.HTTPFailure("Cloudflare "+method, req.URL.String(), err))
 	}
 	defer response.Body.Close()
 	var envelope struct {

@@ -150,7 +150,7 @@ func bootstrapFixture(t *testing.T) (string, []string) {
 	}
 	dataRoot := filepath.Join(root, "data")
 	t.Setenv("XDG_DATA_HOME", dataRoot)
-	before, err := localConfiguration(map[string]any{"node-name": "old"}, "")
+	before, err := localConfiguration(serverOptions{Extra: map[string]any{"node-name": "old"}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

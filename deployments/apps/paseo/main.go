@@ -177,12 +177,24 @@ func run(args []string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "paseo", "ls", "--host", connection, "--json")
-		cmd.Env = append(os.Environ(), "PASEO_PASSWORD="+string(password))
-		if err = cmd.Run(); err != nil {
-			return errors.New("authenticated WebSocket check failed")
+		// The native CLI creates a client ID even for ls. Confine that state to a
+		// temporary home so verification cannot initialize the operator's profile.
+		clientHome, err := os.MkdirTemp("", "ya-infra-paseo-verify-")
+		if err != nil {
+			return err
 		}
-		return nil
+		cmd := exec.CommandContext(ctx, "paseo", "ls", "--host", connection, "--json")
+		// Paseo 0.9.1 resolves the client ID from HOME even with PASEO_HOME set.
+		cmd.Env = append(os.Environ(), "PASEO_PASSWORD="+string(password), "HOME="+clientHome, "PASEO_HOME="+filepath.Join(clientHome, ".paseo"))
+		probeErr := cmd.Run()
+		cleanupErr := os.RemoveAll(clientHome)
+		if probeErr != nil {
+			probeErr = fmt.Errorf("authenticated WebSocket check failed: %w", probeErr)
+		}
+		if cleanupErr != nil {
+			cleanupErr = fmt.Errorf("remove temporary Paseo client state %q: %w", clientHome, cleanupErr)
+		}
+		return errors.Join(probeErr, cleanupErr)
 	default:
 		return errors.New("unsupported action; use --help")
 	}
@@ -412,7 +424,7 @@ func verifyAPI(origin, password string) error {
 		}
 		response, err := client.Do(request)
 		if err != nil {
-			return errors.New("daemon authentication probe failed")
+			return host.HTTPFailure("daemon authentication probe", request.URL.String(), err)
 		}
 		response.Body.Close()
 		if response.StatusCode != probe.status {

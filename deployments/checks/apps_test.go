@@ -5,9 +5,7 @@ package checks
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,7 +47,7 @@ func TestApplicationImages(t *testing.T) {
 			t.Errorf("cleanup namespace/%s failed; inspect remaining resources: %v\n%s", namespace, err, out)
 		}
 	}()
-	apply := func(resource map[string]any) {
+	apply := func(resource any) {
 		t.Helper()
 		data, err := yaml.Marshal(resource)
 		if err != nil {
@@ -57,56 +55,44 @@ func TestApplicationImages(t *testing.T) {
 		}
 		must(data, "apply", "--server-side", "-f", "-")
 	}
-	load := func(app, file string) []map[string]any {
+	load := func(app, file string) []deployment {
 		t.Helper()
 		data, err := os.ReadFile(filepath.Join("..", "apps", app, "kubernetes", file))
 		if err != nil {
 			t.Fatal(err)
 		}
-		decoder := yaml.NewDecoder(bytes.NewReader(data))
-		var resources []map[string]any
-		for {
-			var resource map[string]any
-			err := decoder.Decode(&resource)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			resources = append(resources, resource)
-		}
-		return resources
+		return decodeDocuments[deployment](t, data)
 	}
-	disposable := func(resource map[string]any) map[string]any {
-		spec := resource["spec"].(map[string]any)
-		spec["replicas"] = 1
-		pod := spec["template"].(map[string]any)["spec"].(map[string]any)
-		delete(pod, "nodeSelector")
-		for _, value := range pod["volumes"].([]any) {
-			v := value.(map[string]any)
-			if v["persistentVolumeClaim"] != nil || v["hostPath"] != nil {
-				delete(v, "persistentVolumeClaim")
-				delete(v, "hostPath")
-				v["emptyDir"] = map[string]any{}
+	disposable := func(resource *deployment) *podSpec {
+		one := 1
+		resource.Spec.Replicas = &one
+		pod := &resource.Spec.Template.Spec
+		pod.NodeSelector = nil
+		for i := range pod.Volumes {
+			volume := &pod.Volumes[i]
+			if volume.PersistentVolumeClaim != nil || volume.HostPath != nil {
+				volume.PersistentVolumeClaim = nil
+				volume.HostPath = nil
+				volume.EmptyDir = &map[string]any{}
 			}
 		}
 		return pod
 	}
 	paseo := load("paseo", "deployment.yaml")
 	for _, resource := range paseo {
-		pod := disposable(resource)
-		if resource["metadata"].(map[string]any)["name"] == "paseo-demo" {
-			pod["initContainers"].([]any)[0].(map[string]any)["args"] = []string{"--new"}
-			daemon := pod["containers"].([]any)[0].(map[string]any)
-			delete(daemon, "envFrom")
-			daemon["env"] = append(daemon["env"].([]any), map[string]any{"name": "PASEO_PASSWORD", "value": "disposable-test-password"})
-			raw, err := json.Marshal(resource)
+		pod := disposable(&resource)
+		if resource.Metadata.Name == "paseo-demo" {
+			pod.InitContainers[0].Args = []string{"--new"}
+			daemon := &pod.Containers[0]
+			daemon.EnvFrom = nil
+			password := "disposable-test-password"
+			daemon.Env = append(daemon.Env, environmentVariable{Name: "PASEO_PASSWORD", Value: &password})
+			raw, err := yaml.Marshal(resource)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var second map[string]any
-			if err := json.Unmarshal(bytes.ReplaceAll(raw, []byte("paseo-demo"), []byte("paseo-second")), &second); err != nil {
+			var second deployment
+			if err := yaml.Unmarshal(bytes.ReplaceAll(raw, []byte("paseo-demo"), []byte("paseo-second")), &second); err != nil {
 				t.Fatal(err)
 			}
 			apply(second)
@@ -128,11 +114,11 @@ func TestApplicationImages(t *testing.T) {
 	must(nil, "scale", "deployment/paseo-second", "--replicas=0")
 	must(nil, "wait", "--for=delete", "pod/"+old, "--timeout=45s")
 	browser := load("browserlab", "deployment.yaml")[0]
-	pod := disposable(browser)
-	init := pod["initContainers"].([]any)
-	image := init[0].(map[string]any)["image"].(string)
-	marker := fixtureResource(t, "browser-marker.yaml", "FIXTURE_IMAGE", image)
-	pod["initContainers"] = append([]any{marker}, init...)
+	pod := disposable(&browser)
+	init := pod.InitContainers
+	image := init[0].Image
+	marker := fixtureResource[container](t, "browser-marker.yaml", "FIXTURE_IMAGE", image)
+	pod.InitContainers = append([]container{marker}, init...)
 	apply(browser)
 	must(nil, "rollout", "status", "deployment/browserlab", "--timeout=240s")
 	must(nil, "exec", "deployment/browserlab", "-c", "browser", "--", "curl", "-fsS", "http://127.0.0.1:9222/json/version")
@@ -150,13 +136,14 @@ func TestApplicationImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apply(fixtureResource(t, "tbg-server.yaml"))
+	apply(fixtureResource[map[string]any](t, "tbg-server.yaml"))
 	apply(map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "database-fixture"}, "data": map[string]string{"gateway.sqlite": base64.StdEncoding.EncodeToString(dbBytes)}})
 	tbg := load("tbg", "deployment.yaml")[0]
-	pod = disposable(tbg)
-	pod["hostAliases"] = []any{map[string]any{"ip": "127.0.0.1", "hostnames": []string{"api.telegram.org"}}}
-	gateway := pod["containers"].([]any)[0].(map[string]any)
-	gateway["env"] = []any{map[string]any{"name": "HTTPS_PROXY", "value": "http://127.0.0.1:1"}, map[string]any{"name": "https_proxy", "value": "http://127.0.0.1:1"}, map[string]any{"name": "NO_PROXY", "value": ""}}
+	pod = disposable(&tbg)
+	pod.HostAliases = []hostAlias{{IP: "127.0.0.1", Hostnames: []string{"api.telegram.org"}}}
+	gateway := &pod.Containers[0]
+	proxy, noProxy := "http://127.0.0.1:1", ""
+	gateway.Env = []environmentVariable{{Name: "HTTPS_PROXY", Value: &proxy}, {Name: "https_proxy", Value: &proxy}, {Name: "NO_PROXY", Value: &noProxy}}
 	apply(tbg)
 	rejected := false
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
@@ -171,13 +158,13 @@ func TestApplicationImages(t *testing.T) {
 	}
 	must(nil, "scale", "deployment/tbg", "--replicas=0")
 	must(nil, "wait", "--for=delete", "pod", "-l", "app=tbg", "--timeout=45s")
-	pod["volumes"] = append(pod["volumes"].([]any), map[string]any{"name": "database-fixture", "secret": map[string]any{"secretName": "database-fixture"}})
-	restore := fixtureResource(t, "tbg-restore.yaml", "FIXTURE_IMAGE", gateway["image"].(string))
-	pod["initContainers"] = append([]any{restore}, pod["initContainers"].([]any)...)
+	pod.Volumes = append(pod.Volumes, volume{Name: "database-fixture", Secret: &secretVolume{SecretName: "database-fixture"}})
+	restore := fixtureResource[container](t, "tbg-restore.yaml", "FIXTURE_IMAGE", gateway.Image)
+	pod.InitContainers = append([]container{restore}, pod.InitContainers...)
 	apply(tbg)
 	must(nil, "rollout", "status", "deployment/tbg", "--timeout=90s")
 	// A separate client in the same host network checks HTTP 405 without a notification.
-	probe := fixtureResource(t, "tbg-probe.yaml", "FIXTURE_IMAGE", image)
+	probe := fixtureResource[map[string]any](t, "tbg-probe.yaml", "FIXTURE_IMAGE", image)
 	apply(probe)
 	must(nil, "wait", "--for=jsonpath={.status.phase}=Succeeded", "pod/tbg-probe", "--timeout=60s")
 	if got := strings.TrimSpace(string(must(nil, "logs", "tbg-probe"))); got != "405" {

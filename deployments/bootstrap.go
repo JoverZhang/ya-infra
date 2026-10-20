@@ -110,20 +110,21 @@ func installClientTools() error {
 	return nil
 }
 
-func localConfiguration(config map[string]any, previousRoot string) ([]byte, error) {
+func localConfiguration(config serverOptions, previousRoot string) ([]byte, error) {
 	root := filepath.Join(host.XDG("XDG_DATA_HOME", ".local/share"), "ya-infra", "pv")
 	if previousRoot != "" && previousRoot != root {
 		return nil, errors.New("data root changed; migrate persistent data before changing this path")
 	}
-	if specified, ok := config["default-local-storage-path"]; ok && specified != root {
+	if config.StoragePath != "" && config.StoragePath != root {
 		return nil, errors.New("default-local-storage-path must match the invoking user's XDG data root")
 	}
-	if value, ok := config["secrets-encryption"]; ok && value != true {
+	if config.SecretsEncryption != nil && !*config.SecretsEncryption {
 		return nil, errors.New("local server requires secrets-encryption: true")
 	}
-	config["default-local-storage-path"] = root
-	config["secrets-encryption"] = true
-	config["write-kubeconfig-mode"] = "0600"
+	config.StoragePath = root
+	encrypt := true
+	config.SecretsEncryption = &encrypt
+	config.WriteKubeconfigMode = "0600"
 	return yaml.Marshal(config)
 }
 
@@ -174,7 +175,7 @@ func bootstrapLocal(config host.Config) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	var options map[string]any
+	var options *serverOptions
 	if err := host.Decrypt(filepath.Join(config.Source, "kubernetes", "bootstrap", "local.sops.yaml"), &options); err != nil {
 		return err
 	}
@@ -192,11 +193,11 @@ func bootstrapLocal(config host.Config) error {
 		if err != nil {
 			return errors.New("cannot read the installed server configuration")
 		}
-		var old map[string]any
+		var old serverOptions
 		if yaml.Unmarshal(before, &old) != nil {
 			return errors.New("invalid installed server configuration")
 		}
-		previousRoot, _ = old["default-local-storage-path"].(string)
+		previousRoot = old.StoragePath
 		if previousRoot == "" {
 			return errors.New("installed server configuration has no recorded data root")
 		}
@@ -204,11 +205,11 @@ func bootstrapLocal(config host.Config) error {
 		return errors.New("existing local server is not owned by this bootstrap; inspect it before adoption")
 	}
 	if !binaryPresent {
-		if err = preflightLocal(options); err != nil {
+		if err = preflightLocal(*options); err != nil {
 			return err
 		}
 	}
-	data, err := localConfiguration(options, previousRoot)
+	data, err := localConfiguration(*options, previousRoot)
 	if err != nil {
 		return err
 	}
@@ -369,29 +370,21 @@ func installKSOPS(dir string) error {
 }
 
 // Check the native Pod and Service CIDRs against existing host routes before installation.
-func checkRanges(options map[string]any, occupied []netip.Prefix) error {
+func checkRanges(options serverOptions, occupied []netip.Prefix) error {
 	var selected []netip.Prefix
-	for _, entry := range []struct{ name, fallback string }{{"cluster-cidr", "10.42.0.0/16"}, {"service-cidr", "10.43.0.0/16"}} {
-		value := entry.fallback
-		if configured, exists := options[entry.name]; exists {
-			switch typed := configured.(type) {
-			case string:
-				value = typed
-			case []any:
-				parts := []string{}
-				for _, item := range typed {
-					text, ok := item.(string)
-					if !ok {
-						return fmt.Errorf("invalid %s", entry.name)
-					}
-					parts = append(parts, text)
-				}
-				value = strings.Join(parts, ",")
-			default:
-				return fmt.Errorf("invalid %s", entry.name)
-			}
+	for _, entry := range []struct {
+		name       string
+		configured cidrRanges
+		fallback   string
+	}{
+		{"cluster-cidr", options.ClusterCIDR, "10.42.0.0/16"},
+		{"service-cidr", options.ServiceCIDR, "10.43.0.0/16"},
+	} {
+		ranges := entry.configured
+		if ranges == nil {
+			ranges = cidrRanges{entry.fallback}
 		}
-		for _, cidr := range strings.Split(value, ",") {
+		for _, cidr := range ranges {
 			prefix, err := netip.ParsePrefix(strings.TrimSpace(cidr))
 			if err != nil {
 				return fmt.Errorf("invalid %s network", entry.name)
@@ -407,7 +400,7 @@ func checkRanges(options map[string]any, occupied []netip.Prefix) error {
 	return nil
 }
 
-func preflightLocal(options map[string]any) error {
+func preflightLocal(options serverOptions) error {
 	for _, unit := range []string{"k3s.service", "k3s-agent.service", "kubelet.service"} {
 		out, err := exec.Command("systemctl", "show", unit, "--property=LoadState", "--value").Output()
 		if err != nil {
@@ -419,8 +412,8 @@ func preflightLocal(options map[string]any) error {
 	}
 	ports := []string{"6444", "10010", "10248", "10249", "10250", "10256", "10257", "10258", "10259"}
 	apiPort := "6443"
-	if port, exists := options["https-listen-port"]; exists {
-		apiPort = fmt.Sprint(port)
+	if options.HTTPSListenPort != nil {
+		apiPort = fmt.Sprint(*options.HTTPSListenPort)
 	}
 	for _, port := range append(ports, apiPort) {
 		listener, err := net.Listen("tcp", ":"+port)
@@ -429,9 +422,8 @@ func preflightLocal(options map[string]any) error {
 		}
 		listener.Close()
 	}
-	backend, _ := options["flannel-backend"].(string)
 	udpPorts := []int{8472}
-	switch backend {
+	switch options.FlannelBackend {
 	case "wireguard-native":
 		udpPorts = []int{51820, 51821}
 	case "none", "host-gw":
@@ -453,8 +445,8 @@ func preflightLocal(options map[string]any) error {
 		var routes []struct {
 			Destination string `json:"dst"`
 		}
-		if json.Unmarshal(out, &routes) != nil {
-			return errors.New("invalid host route output")
+		if err := json.Unmarshal(out, &routes); err != nil {
+			return fmt.Errorf("decode host routes from ip %s: %w", family, err)
 		}
 		for _, route := range routes {
 			if prefix, err := netip.ParsePrefix(route.Destination); err == nil && prefix.Bits() != 0 {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,6 +112,17 @@ func gatewayFixture(t *testing.T) (*cloudFixture, *gatewayController, Route) {
 	g := Gateway{Zone: "example.com", AccountID: strings.Repeat("a", 32), TunnelID: "00000000-0000-0000-0000-000000000001", APIToken: "test-credential-value"}
 	ctl := &gatewayController{client: &cloudflareClient{gateway: g, baseURL: s.URL, http: s.Client()}, stateDir: t.TempDir()}
 	return c, ctl, Route{Gateway: "public", Hostname: "app.example.com", Service: "http://app.apps.svc.cluster.local:8080", State: "present"}
+}
+
+func TestCloudflareTransportCause(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+	client := &cloudflareClient{baseURL: server.URL, http: server.Client()}
+	err := client.request("GET", "/zones", nil, nil)
+	var transport *net.OpError
+	if !errors.As(err, &transport) || !strings.Contains(err.Error(), server.URL+"/zones") || !strings.Contains(err.Error(), "read current state") {
+		t.Fatalf("missing endpoint, cause, or retry instruction: %v", err)
+	}
 }
 
 func TestGatewayCancelUncertainTunnelCreation(t *testing.T) {

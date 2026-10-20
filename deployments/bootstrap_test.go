@@ -9,7 +9,7 @@ import (
 	"github.com/JoverZhang/ya-infra/deployments/internal/host"
 )
 
-func TestBootstrapStorageAndKubeconfigGuards(t *testing.T) {
+func TestXDGDataFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	for _, value := range []string{"", "relative"} {
@@ -18,22 +18,28 @@ func TestBootstrapStorageAndKubeconfigGuards(t *testing.T) {
 			t.Fatal(got)
 		}
 	}
-	target := filepath.Join(home, "data")
+}
+
+func TestBootstrapStorageGuards(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "data")
 	t.Setenv("XDG_DATA_HOME", target)
-	data, err := localConfiguration(map[string]any{"disable": []any{"traefik", "servicelb"}}, "")
+	data, err := localConfiguration(serverOptions{Extra: map[string]any{"disable": []any{"traefik", "servicelb"}}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var config map[string]any
+	var config serverOptions
 	if err = host.Decode(data, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config["default-local-storage-path"] != filepath.Join(target, "ya-infra", "pv") || config["secrets-encryption"] != true {
+	if config.StoragePath != filepath.Join(target, "ya-infra", "pv") || config.SecretsEncryption == nil || !*config.SecretsEncryption || config.Extra["disable"] == nil {
 		t.Fatal(config)
 	}
-	if _, err = localConfiguration(map[string]any{}, "/other/data"); err == nil {
+	if _, err = localConfiguration(serverOptions{}, "/other/data"); err == nil {
 		t.Fatal("data-root change accepted")
 	}
+}
+
+func TestKubeconfigMergePreservesOtherContexts(t *testing.T) {
 	existingData, err := os.ReadFile("testdata/kubeconfig-existing.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -63,15 +69,24 @@ func TestBootstrapStorageAndKubeconfigGuards(t *testing.T) {
 	if err = mergeKubeconfig(original, source, "local"); err == nil {
 		t.Fatal("context collision accepted")
 	}
-	path := filepath.Join(home, "private")
-	if err = host.WritePrivate(path, []byte("same")); err != nil {
+}
+
+func TestPrivateWriteIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private")
+	if err := host.WritePrivate(path, []byte("same")); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.Stat(path)
-	if err = host.WritePrivate(path, []byte("same")); err != nil {
+	before, err := os.Stat(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	after, _ := os.Stat(path)
+	if err := host.WritePrivate(path, []byte("same")); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !before.ModTime().Equal(after.ModTime()) || after.Mode().Perm() != 0600 {
 		t.Fatal("unchanged private file was rewritten")
 	}
@@ -79,19 +94,34 @@ func TestBootstrapStorageAndKubeconfigGuards(t *testing.T) {
 
 func TestBootstrapRejectsNetworkConflicts(t *testing.T) {
 	occupied := []netip.Prefix{netip.MustParsePrefix("10.40.0.0/12")}
-	if err := checkRanges(map[string]any{}, occupied); err == nil {
+	if err := checkRanges(serverOptions{}, occupied); err == nil {
 		t.Fatal("overlapping host route accepted")
 	}
-	custom := map[string]any{"cluster-cidr": "10.200.0.0/16", "service-cidr": "10.201.0.0/16"}
+	custom := serverOptions{ClusterCIDR: cidrRanges{"10.200.0.0/16"}, ServiceCIDR: cidrRanges{"10.201.0.0/16"}}
 	if err := checkRanges(custom, occupied); err != nil {
 		t.Fatal(err)
 	}
-	custom["service-cidr"] = "10.200.10.0/24"
+	custom.ServiceCIDR = cidrRanges{"10.200.10.0/24"}
 	if err := checkRanges(custom, occupied); err == nil {
 		t.Fatal("Pod and Service range overlap accepted")
 	}
-	custom["cluster-cidr"] = "not-a-network"
+	custom.ClusterCIDR = cidrRanges{"not-a-network"}
 	if err := checkRanges(custom, nil); err == nil {
 		t.Fatal("invalid network accepted")
+	}
+}
+
+func TestNativeServerCIDRForms(t *testing.T) {
+	for _, input := range []string{
+		"cluster-cidr: 10.200.0.0/16,fd00:200::/64\nservice-cidr: 10.201.0.0/16,fd00:201::/112\n",
+		"cluster-cidr: [10.200.0.0/16, 'fd00:200::/64']\nservice-cidr: [10.201.0.0/16, 'fd00:201::/112']\n",
+	} {
+		var options serverOptions
+		if err := host.Decode([]byte(input), &options); err != nil {
+			t.Fatal(err)
+		}
+		if err := checkRanges(options, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

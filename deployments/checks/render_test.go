@@ -185,26 +185,21 @@ func checkWebEgress(t *testing.T, data []byte) {
 }
 func secretIdentity(t *testing.T, data []byte) (string, string) {
 	t.Helper()
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var name, reference string
-	for {
-		var resource map[string]any
-		err := decoder.Decode(&resource)
-		if err == io.EOF {
-			break
+	// Read only these fields; this view is never written back to the cluster.
+	type secretResource struct {
+		Kind     string
+		Metadata objectMetadata
+		Spec     deploymentSpec
+	}
+	for _, resource := range decodeDocuments[secretResource](t, data) {
+		if resource.Kind == "Secret" {
+			name = resource.Metadata.Name
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resource["kind"] == "Secret" {
-			name = resource["metadata"].(map[string]any)["name"].(string)
-		}
-		if resource["kind"] == "Deployment" {
-			spec := resource["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
-			for _, v := range spec["volumes"].([]any) {
-				volume := v.(map[string]any)
-				if secret, ok := volume["secret"].(map[string]any); ok {
-					reference = secret["secretName"].(string)
+		if resource.Kind == "Deployment" {
+			for _, volume := range resource.Spec.Template.Spec.Volumes {
+				if volume.Secret != nil {
+					reference = volume.Secret.SecretName
 				}
 			}
 		}

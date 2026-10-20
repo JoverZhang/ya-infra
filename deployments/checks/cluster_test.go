@@ -89,13 +89,13 @@ func TestClusterApplyAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var deployment map[string]any
-	if err := yaml.Unmarshal(raw, &deployment); err != nil {
+	var workload deployment
+	if err := yaml.Unmarshal(raw, &workload); err != nil {
 		t.Fatal(err)
 	}
-	spec := deployment["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
-	spec["containers"].([]any)[0].(map[string]any)["envFrom"] = []any{map[string]any{"secretRef": map[string]any{"name": "check-config"}}}
-	raw, err = yaml.Marshal(deployment)
+	spec := &workload.Spec.Template.Spec
+	spec.Containers[0].EnvFrom = []environmentSource{{SecretRef: &objectReference{Name: "check-config"}}}
+	raw, err = yaml.Marshal(workload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestClusterApplyAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"kustomization.yaml", "ksops.yaml"} {
-		resource := fixtureResource(t, "cluster-"+name, "FIXTURE_NAMESPACE", namespace)
+		resource := fixtureResource[map[string]any](t, "cluster-"+name, "FIXTURE_NAMESPACE", namespace)
 		data, err := yaml.Marshal(resource)
 		if err != nil {
 			t.Fatal(err)
@@ -158,35 +158,36 @@ func TestClusterApplyAndRetention(t *testing.T) {
 		t.Fatal("Secret update did not roll the workload")
 	}
 	// Use a unique retained StorageClass. No existing class or volume is changed.
-	var classes struct{ Items []map[string]any }
+	var classes struct{ Items []storageClass }
 	if err := json.Unmarshal(must(nil, "get", "storageclass", "-o", "json"), &classes); err != nil {
 		t.Fatal(err)
 	}
-	var original map[string]any
+	var original *storageClass
 	for _, class := range classes.Items {
-		if class["provisioner"] == "rancher.io/local-path" {
-			original = class
+		if class.Provisioner == "rancher.io/local-path" {
+			original = &class
 			break
 		}
 	}
 	if original == nil {
 		t.Fatal("the disposable cluster needs the local-path provisioner for retention checks")
 	}
-	class := map[string]any{"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass", "metadata": map[string]any{"name": namespace}, "provisioner": original["provisioner"], "reclaimPolicy": "Retain", "volumeBindingMode": "WaitForFirstConsumer"}
-	if original["parameters"] != nil {
-		class["parameters"] = original["parameters"]
+	class := storageClass{
+		APIVersion: "storage.k8s.io/v1", Kind: "StorageClass", Metadata: objectMetadata{Name: namespace},
+		Provisioner: original.Provisioner, Parameters: original.Parameters,
+		ReclaimPolicy: "Retain", VolumeBindingMode: "WaitForFirstConsumer",
 	}
 	apply(class)
-	claim := fixtureResource(t, "retention-claim.yaml", "FIXTURE_NAMESPACE", namespace)
+	claim := fixtureResource[persistentVolumeClaim](t, "retention-claim.yaml", "FIXTURE_NAMESPACE", namespace)
 	apply(claim)
-	image := spec["containers"].([]any)[0].(map[string]any)["image"].(string)
+	image := spec.Containers[0].Image
 	pod := func(name string, argv []string) map[string]any {
 		t.Helper()
 		command, err := json.Marshal(argv)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return fixtureResource(t, "retention-pod.yaml", "FIXTURE_NAMESPACE", namespace,
+		return fixtureResource[map[string]any](t, "retention-pod.yaml", "FIXTURE_NAMESPACE", namespace,
 			"FIXTURE_NAME", name, "FIXTURE_IMAGE", image, "FIXTURE_COMMAND", string(command))
 	}
 	apply(pod("write", []string{"mkdir", "-p", "/data/retained"}))
@@ -202,7 +203,7 @@ func TestClusterApplyAndRetention(t *testing.T) {
 	must(nil, "-n", namespace, "delete", "pvc/data", "--wait=true")
 	must(nil, "wait", "--for=jsonpath={.status.phase}=Released", "pv/"+volume, "--timeout=60s")
 	must(nil, "patch", "pv", volume, "--type=json", "-p", `[{"op":"remove","path":"/spec/claimRef"}]`)
-	claim["spec"].(map[string]any)["volumeName"] = volume
+	claim.Spec.VolumeName = volume
 	apply(claim)
 	apply(pod("read", []string{"test", "-d", "/data/retained"}))
 	must(nil, "-n", namespace, "wait", "--for=jsonpath={.status.phase}=Succeeded", "pod/read", "--timeout=120s")

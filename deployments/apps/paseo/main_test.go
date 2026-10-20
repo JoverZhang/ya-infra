@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,6 +36,16 @@ func TestVerifyRefusesRedirectedCredentials(t *testing.T) {
 	defer source.Close()
 	if err := verifyAPI(source.URL, "private-value"); err == nil || strings.Contains(err.Error(), "private-value") {
 		t.Fatalf("unsafe verify: %v", err)
+	}
+}
+
+func TestVerifyReportsTransportCause(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+	err := verifyAPI(server.URL, "fixture-password")
+	var transport *net.OpError
+	if !errors.As(err, &transport) || !strings.Contains(err.Error(), server.URL+"/api/status") || strings.Contains(err.Error(), "fixture-password") {
+		t.Fatalf("missing safe diagnostic: %v", err)
 	}
 }
 

@@ -95,8 +95,8 @@ func installClient(target string, data []byte, statePath string) error {
 	}
 	saved, err := os.ReadFile(statePath)
 	if err == nil {
-		if json.Unmarshal(saved, &state) != nil {
-			return errors.New("invalid host client ownership state")
+		if err := json.Unmarshal(saved, &state); err != nil {
+			return fmt.Errorf("decode host client ownership state %q: %w", statePath, err)
 		}
 	} else if !os.IsNotExist(err) {
 		return err
