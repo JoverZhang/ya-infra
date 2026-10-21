@@ -3,14 +3,20 @@ set positional-arguments
 
 [private]
 [no-cd]
-default: svc
+default:
+    @just --justfile {{quote(justfile_directory() / "deployments/justfile")}}
 
-# Discover deployment services, show help, or run an action.
+# Install client tools and optional local cluster prerequisites.
 [no-cd]
-svc *args:
-    @just --justfile {{quote(justfile_directory() / "deployments/justfile")}} svc "$@"
+bootstrap *args:
+    @exec just --justfile {{quote(justfile_directory() / "deployments/justfile")}} bootstrap "$@"
 
-# Manage public hostname routes.
+# Forward native kubectl arguments.
+[no-cd]
+kubectl *args:
+    @exec just --justfile {{quote(justfile_directory() / "deployments/justfile")}} kubectl "$@"
+
+# Manage Cloudflare routes.
 [no-cd]
 gateway *args:
-    @just --justfile {{quote(justfile_directory() / "deployments/justfile")}} gateway "$@"
+    @exec just --justfile {{quote(justfile_directory() / "deployments/justfile")}} gateway "$@"

@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: browserlab}
+spec:
+  replicas: 0                     # Stop the old browser and verify the restored profile first.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: browserlab}
+  template:
+    metadata:
+      labels: {app: browserlab}
+    spec:
+      nodeSelector: {ya-infra/local: "true"}
+      automountServiceAccountToken: false
+      shareProcessNamespace: false
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: restore-check
+          image: localhost/ya-infra-browserlab@sha256:17d056ffd9af51ab7eba5e327527aab2bc4ed567753fe0fc40843b2121f34d92
+          imagePullPolicy: Never
+          command: [/usr/local/bin/browserlab, prepare-profile]
+          env: [{name: PUID, value: "1000"}, {name: PGID, value: "1000"}]
+          volumeMounts: [{name: profile, mountPath: /config}]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: "1", memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL], add: [CHOWN, DAC_OVERRIDE, FOWNER]}
+      containers:
+        - name: browser
+          image: localhost/ya-infra-browserlab@sha256:17d056ffd9af51ab7eba5e327527aab2bc4ed567753fe0fc40843b2121f34d92
+          imagePullPolicy: Never
+          env:
+            - {name: PUID, value: "1000"}
+            - {name: PGID, value: "1000"}
+            - {name: TZ, value: UTC}
+            - {name: START_DOCKER, value: "false"}
+            - {name: CHROME_CLI, value: "--remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 --no-first-run"}
+          volumeMounts:
+            - {name: profile, mountPath: /config}
+            - {name: workspace, mountPath: /workspace/lab, readOnly: true}
+            - {name: shm, mountPath: /dev/shm}
+          resources:
+            requests: {cpu: 100m, memory: 512Mi}
+            limits: {cpu: "4", memory: 8Gi}
+          readinessProbe:
+            httpGet: {path: /, port: 3000}
+          startupProbe:
+            httpGet: {path: /, port: 3000}
+            failureThreshold: 90
+            periodSeconds: 2
+        - name: cdp
+          image: localhost/ya-infra-browserlab@sha256:17d056ffd9af51ab7eba5e327527aab2bc4ed567753fe0fc40843b2121f34d92
+          imagePullPolicy: Never
+          command: [/usr/local/bin/browserlab, relay, "0.0.0.0:9223", "127.0.0.1:9222"]
+          readinessProbe:
+            httpGet: {path: /json/version, port: 9223}
+            periodSeconds: 2
+          securityContext:
+            runAsUser: 65532
+            runAsGroup: 65532
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: profile
+          persistentVolumeClaim: {claimName: browserlab-profile}
+        - name: workspace
+          hostPath:
+            path: /REPLACE_WITH_ABSOLUTE_READ_ONLY_WORKSPACE
+            type: Directory
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 4Gi}

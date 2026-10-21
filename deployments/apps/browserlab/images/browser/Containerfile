@@ -1,0 +1,7 @@
+FROM lscr.io/linuxserver/chromium@sha256:6d037d5529983e978f0b308492aa7363e9d5db1c916b9a2d40ac9565909c427b
+ENV DEBIAN_FRONTEND=noninteractive OPENCLI_WINDOW=foreground OPENCLI_VERSION=1.7.22 NODE_VERSION=24.15.0-1nodesource1
+COPY --chmod=0755 browserlab /usr/local/bin/browserlab
+RUN ["apt-get", "update"]
+RUN ["apt-get", "install", "-y", "--no-install-recommends", "ca-certificates", "curl", "gnupg"]
+RUN ["/usr/local/bin/browserlab", "prepare-image"]
+ENTRYPOINT ["/usr/local/bin/browserlab", "desktop"]

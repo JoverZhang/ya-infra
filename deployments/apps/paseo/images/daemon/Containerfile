@@ -1,0 +1,21 @@
+FROM docker.io/library/node@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
+USER root
+COPY artifacts/node /usr/local/bin/node
+COPY artifacts/codex-dist /usr/local/
+COPY artifacts/paseo /usr/local/lib/node_modules/@getpaseo/cli
+RUN ["chmod", "-R", "a+rX", "/usr/local"]
+RUN ["ln", "-s", "/usr/local/lib/node_modules/@getpaseo/cli/bin/paseo", "/usr/local/bin/paseo"]
+COPY --chmod=0755 initialize /opt/infra/initialize
+COPY codex.toml /opt/infra/codex.toml
+ENV HOME=/home/paseo PASEO_HOME=/home/paseo/.paseo PASEO_LISTEN=0.0.0.0:6767 \
+    PASEO_WEB_UI_ENABLED=true PASEO_LOG_FORMAT=json PASEO_LOG_LEVEL=info \
+    CODEX_HOME=/home/paseo/.codex XDG_CONFIG_HOME=/home/paseo/.config \
+    XDG_DATA_HOME=/home/paseo/.local/share XDG_STATE_HOME=/home/paseo/.local/state \
+    XDG_CACHE_HOME=/home/paseo/.cache
+USER 1000:1000
+RUN ["node", "--version"]
+RUN ["codex", "--version"]
+RUN ["paseo", "--version"]
+WORKDIR /workspace
+EXPOSE 6767
+ENTRYPOINT ["node", "/usr/local/lib/node_modules/@getpaseo/cli/node_modules/@getpaseo/server/dist/scripts/supervisor-entrypoint.js"]

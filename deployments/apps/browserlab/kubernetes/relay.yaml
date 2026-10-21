@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: browserlab-relay}
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: browserlab-relay}
+  template:
+    metadata:
+      labels: {app: browserlab-relay}
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector: {ya-infra/local: "true"}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: desktop
+          image: localhost/ya-infra-browserlab@sha256:17d056ffd9af51ab7eba5e327527aab2bc4ed567753fe0fc40843b2121f34d92
+          imagePullPolicy: Never
+          command: [/usr/local/bin/browserlab, relay, "127.0.0.1:43000", "browserlab.apps.svc.cluster.local:3000"]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          readinessProbe:
+            tcpSocket: {host: "127.0.0.1", port: 43000}
+        - name: cdp
+          image: localhost/ya-infra-browserlab@sha256:17d056ffd9af51ab7eba5e327527aab2bc4ed567753fe0fc40843b2121f34d92
+          imagePullPolicy: Never
+          command: [/usr/local/bin/browserlab, relay, "127.0.0.1:9222", "browserlab.apps.svc.cluster.local:9223"]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          readinessProbe:
+            tcpSocket: {host: "127.0.0.1", port: 9222}

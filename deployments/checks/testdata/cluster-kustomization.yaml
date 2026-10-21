@@ -1,0 +1,3 @@
+resources: [deployment.yaml, service.yaml]
+namespace: FIXTURE_NAMESPACE
+generators: [ksops.yaml]

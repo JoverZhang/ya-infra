@@ -1,0 +1,10 @@
+name: restore-fixture
+image: FIXTURE_IMAGE
+imagePullPolicy: Never
+command: [cp, /fixture/gateway.sqlite, /var/lib/tbg/gateway.sqlite]
+volumeMounts:
+  - name: data
+    mountPath: /var/lib/tbg
+  - name: database-fixture
+    mountPath: /fixture
+    readOnly: true

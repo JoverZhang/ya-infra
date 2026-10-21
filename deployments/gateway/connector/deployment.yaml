@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+spec:
+  replicas: 0                     # Enable after the migration origin checks pass.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: cloudflared}
+  template:
+    metadata:
+      labels: {app: cloudflared}
+    spec:
+      automountServiceAccountToken: false
+      hostNetwork: true           # Keep until every existing origin is reachable from the Pod network.
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector: {ya-infra/local: "true"}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: cloudflared
+          image: docker.io/cloudflare/cloudflared@sha256:18626b1baac4450214535cd5bc40ef44c0635244d585ebf707749c22b6f3408f
+          args: [tunnel, --no-autoupdate, --metrics, "127.0.0.1:20243", run]
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: connector-token, key: token}
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          readinessProbe:
+            httpGet: {host: "127.0.0.1", path: /ready, port: 20243}
+            periodSeconds: 10
+          startupProbe:
+            httpGet: {host: "127.0.0.1", path: /ready, port: 20243}
+            failureThreshold: 30
+            periodSeconds: 2

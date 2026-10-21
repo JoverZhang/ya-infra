@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tbg-probe
+spec:
+  hostNetwork: true
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: FIXTURE_IMAGE
+      imagePullPolicy: Never
+      command:
+        - curl
+        - --silent
+        - --show-error
+        - --output
+        - /dev/null
+        - --write-out
+        - '%{http_code}'
+        - http://127.0.0.1:18473/v1/whoami

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: paseo-demo-home}
+spec:
+  storageClassName: ya-infra-local
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 20Gi}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: paseo-demo-workspace}
+spec:
+  storageClassName: ya-infra-local
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 20Gi}

@@ -1,0 +1,7 @@
+name: fixture-marker
+image: FIXTURE_IMAGE
+imagePullPolicy: Never
+command: [touch, /config/.ya-infra-restored]
+volumeMounts:
+  - name: profile
+    mountPath: /config

@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: tbg}
+spec:
+  replicas: 0                     # Enable only after the old bot poller stops and the DB is restored.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: tbg}
+  template:
+    metadata:
+      labels: {app: tbg}
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector: {ya-infra/local: "true"}
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: check-database
+          image: localhost/telegram-bot-gateway@sha256:a3b2e40e598803c5e71215ba86d72da704a82c6491b96be85de4492c79174d38
+          imagePullPolicy: Never
+          command: [/bin/test, -s, /var/lib/tbg/gateway.sqlite]
+          volumeMounts: [{name: data, mountPath: /var/lib/tbg, readOnly: true}]
+          resources:
+            requests: {cpu: 10m, memory: 8Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      containers:
+        - name: gateway
+          image: localhost/telegram-bot-gateway@sha256:a3b2e40e598803c5e71215ba86d72da704a82c6491b96be85de4492c79174d38
+          imagePullPolicy: Never
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/tbg}
+            - {name: config, mountPath: /root/.config/tbg, readOnly: true}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          readinessProbe:
+            tcpSocket: {host: "127.0.0.1", port: 18473}
+          startupProbe:
+            tcpSocket: {host: "127.0.0.1", port: 18473}
+            failureThreshold: 30
+            periodSeconds: 2
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: tbg-data}
+        - name: config
+          secret: {secretName: tbg-server, defaultMode: 384}

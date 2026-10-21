@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tbg-server
+stringData:
+  server.yaml: |
+    listen: 127.0.0.1:18473
+    data_dir: /var/lib/tbg
+    telegram:
+      bot_token: disposable-invalid-token
+    admins: []

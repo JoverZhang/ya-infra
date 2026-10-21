@@ -1,44 +1,86 @@
-# User infrastructure
+# Deployments
 
-Rootless Podman deployments for Paseo/Codex, its shared browser UI and Cloudflare
-gateway, plus the Telegram gateway and Browserlab.
+Use native Kubernetes resources for applications. Use the Go CLI for host bootstrap,
+kubectl forwarding, and Cloudflare routes. [AGENTS.md](AGENTS.md) routes task-specific reading.
 
-## Configure and inspect
+## Start
 
-Commands read exactly `./config.toml` in the invocation directory, including when
-using an external justfile. Copy [config.example.toml](config.example.toml) there
-and set the deployment values; this repository ignores the actual file.
+Install Go and just. The Go module pins the toolchain; bootstrap pins client tools.
+Run commands from the directory that will contain your entry configuration.
 
-```bash
-cp deployments/config.example.toml config.toml
-# Edit config.toml before running deployment actions.
-just svc
-just svc paseo status
-just svc paseo pair --list
-just svc podman install
+```sh
+just bootstrap
+# Add the printed client-tools directory to PATH in your shell profile.
+age-keygen -o /private/path/age.key
+export SOPS_AGE_KEY_FILE=/private/path/age.key
 ```
 
-These examples run from the repository root. The root justfile forwards to this
-module; running here directly or using `just -f /path/to/ya-infra/justfile ...`
-also keeps the invocation directory. When adopting an existing deployment, copy
-its private `infra.toml` to `config.toml` in that directory and keep its instance
-names and user-level credentials/state intact.
+Set the public age recipient in [`.sops.yaml`](.sops.yaml). Keep the private key outside Git.
+The repository supplies `*.example.yaml`; create each required `*.sops.yaml` locally.
+Encrypted files can be versioned after a privacy review. Public examples are not live configuration.
 
-The public interface is `just svc <module> <action> ...` and
-`just gateway <action> ...`; module help supplies the available actions.
-Switching configuration files retains the same Linux-user container names,
-credentials and state namespace. The [runtime installer](services/podman/README.md)
-configures socket-based boot recovery; user lingering must be enabled.
-Python 3.11+, Bash and Just are required; tbg and Browserlab also use Podman Quadlet.
+```sh
+sops --config deployments/.sops.yaml encrypt \
+  --filename-override config.sops.yaml \
+  --output config.sops.yaml deployments/config.example.yaml
+sops config.sops.yaml
+```
 
-## Extend
+Only `./config.sops.yaml` is read. `source` is relative to the invocation directory.
+Use the same encryption command with the owning example and output name for app,
+Gateway, and local-server inputs. Edit sensitive values through SOPS.
 
-- Add an environment through the [Paseo guide](services/paseo/README.md#instances).
-- Add a module as `services/<name>/manage`; [bin/svc](bin/svc) discovers it and
-  forwards arguments unchanged. Keep lifecycle actions and validation inside
-  that module. For public routing, implement `endpoint`, `deploy` and
-  `verify-public` against the interface enforced by [gateway/model.py](gateway/model.py).
-- Add a public Route through the [Gateway guide](gateway/README.md#routes).
+```sh
+just bootstrap --help
+just bootstrap --local              # Optional local system service; requires sudo.
+just kubectl get deploy,pod,svc,pvc -A
+just gateway --help
+```
 
-Start with the [agent task map](AGENTS.md) for task-specific reading. Use
-[Checks](checks/README.md) to choose validation with appropriate side effects.
+An existing cluster needs only client tools and a named kubeconfig context. Select
+its storage class in the app manifests. The local cluster Kustomization includes
+local storage and the connector; it is not a prerequisite for other clusters.
+Local bootstrap checks services, ports, CIDRs, and a 2 GiB free-space floor. Plan
+additional capacity for application data. Review the distribution's
+[host requirements](https://docs.k3s.io/installation/requirements) before installation.
+
+## Manage native resources
+
+```sh
+just kubectl diff --server-side -k deployments/examples/app/kubernetes
+just kubectl apply --server-side -k deployments/examples/app/kubernetes
+just kubectl -n apps rollout status deployment/app-web
+```
+
+Create the `apps` namespace before using the example. `kubectl` preserves native
+arguments, streams, terminal access, and exit status. An explicit `--context`
+overrides the configured default. Hooks, decryption of resources, and readiness
+checks are separate operations.
+
+For encrypted applications, standalone Kustomize runs KSOPS locally. `ksops.yaml`
+is a generator declaration. It reads encrypted native Secrets (`files`) or packs
+an encrypted app file into a Secret (`secretFrom`). It is never an API resource.
+
+```sh
+umask 077
+mktemp -d                          # Use the returned directory as <private-temp>.
+kustomize build --enable-alpha-plugins --enable-exec \
+  deployments/apps/tbg/kubernetes > <private-temp>/resources.yaml
+just kubectl diff --server-side -f <private-temp>/resources.yaml
+just kubectl apply --server-side -f <private-temp>/resources.yaml
+just kubectl -n apps rollout status deployment/tbg
+rm <private-temp>/resources.yaml
+rmdir <private-temp>
+```
+
+Run the next command only after checking the preceding result. Stop if rendering
+fails. Diff returns 0 for no change, 1 for changes, and greater values for errors.
+Use the same completed manifest for diff and apply; keep native Secret masking
+enabled. Remove the private directory after success, failure, or interruption.
+The [integration checks](checks/README.md) automate this sequence with temporary
+cleanup. Secret content hashes update Pod references; re-encryption alone has no effect.
+
+Normal apply does not prune removed resources. Use explicit native deletion.
+Application hooks are built from `apps/<app>/main.go` and run explicitly; consult
+that app's help. [Migration](docs/migration.md) owns data, image import, cutover,
+and rollback procedures. The included migration workloads start with zero replicas.

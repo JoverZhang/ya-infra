@@ -3,15 +3,25 @@ set positional-arguments
 
 [private]
 [no-cd]
-default:
-    @python3 {{quote(justfile_directory() / "bin/svc")}}
+_build:
+    @go -C {{quote(justfile_directory())}} build -o .bin/ya-infra .
 
-# Discover services, show their help, or run an action.
+[private]
 [no-cd]
-svc service="" action="" *args:
-    @python3 {{quote(justfile_directory() / "bin/svc")}} "$@"
+default: _build
+    @exec {{quote(justfile_directory() / ".bin/ya-infra")}} --help
 
-# Manage public hostname routes.
+# Install client tools and optional local cluster prerequisites.
 [no-cd]
-gateway action="" *args:
-    @if [[ -z "$1" ]]; then python3 {{quote(justfile_directory() / "gateway/manage")}} --help; else python3 {{quote(justfile_directory() / "gateway/manage")}} "$@"; fi
+bootstrap *args: _build
+    @exec {{quote(justfile_directory() / ".bin/ya-infra")}} bootstrap "$@"
+
+# Forward native kubectl arguments.
+[no-cd]
+kubectl *args: _build
+    @exec {{quote(justfile_directory() / ".bin/ya-infra")}} kubectl "$@"
+
+# Manage Cloudflare routes.
+[no-cd]
+gateway *args: _build
+    @exec {{quote(justfile_directory() / ".bin/ya-infra")}} gateway "$@"

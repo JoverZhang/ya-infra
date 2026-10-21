@@ -2,3 +2,4 @@
 /.infra/
 config.toml
 infra.toml
+/.data

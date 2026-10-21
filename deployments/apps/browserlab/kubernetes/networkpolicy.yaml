@@ -1,0 +1,8 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: browserlab-private}
+spec:
+  podSelector:
+    matchLabels: {app: browserlab}
+  policyTypes: [Ingress]
+  ingress: []                     # Node traffic from the loopback relay remains reachable.

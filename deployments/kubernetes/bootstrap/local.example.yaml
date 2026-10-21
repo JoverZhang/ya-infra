@@ -1,0 +1,10 @@
+# Native local server options. Bootstrap adds the invoking user's absolute PV path.
+secrets-encryption: true
+write-kubeconfig-mode: "0600"
+node-label:
+  - ya-infra/local=true
+disable:
+  - traefik
+  - servicelb
+kubelet-arg:
+  - pod-max-pids=512
