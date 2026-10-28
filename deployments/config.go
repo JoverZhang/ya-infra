@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -12,10 +11,11 @@ import (
 )
 
 type Gateway struct {
-	Zone      string `yaml:"zone"`
-	AccountID string `yaml:"account_id"`
-	TunnelID  string `yaml:"tunnel_id"`
-	APIToken  string `yaml:"api_token"`
+	Zone        string `yaml:"zone"`
+	AccountID   string `yaml:"account_id"`
+	TunnelID    string `yaml:"tunnel_id"`
+	APIToken    string `yaml:"api_token"`
+	TunnelToken string `yaml:"tunnel_token,omitempty"`
 }
 
 type Route struct {
@@ -37,9 +37,9 @@ var dnsName = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a
 var accountID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 var tunnelID = regexp.MustCompile(`^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$`)
 
-func loadGateway(source string) (gatewayConfig, error) {
+func loadGateway() (gatewayConfig, error) {
 	var config gatewayConfig
-	if err := host.Decrypt(filepath.Join(source, "gateway", "config.sops.yaml"), &config); err != nil {
+	if err := host.Decrypt("config.sops.yaml", &config); err != nil {
 		return config, err
 	}
 	if len(config.Gateways) == 0 {

@@ -1,0 +1,17 @@
+[Unit]
+Description=Cloudflare Tunnel connectors for ya-infra
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/ya-infra
+Environment=PATH=%h/.local/share/ya-infra/bin:/usr/local/bin:/usr/bin
+Environment=PODMAN_COMPOSE_PROVIDER=podman-compose
+ExecStartPre=%h/ya-infra/deployments/.bin/ya-infra gateway prepare
+ExecStart=/usr/bin/podman compose -f deployments/gateway/compose.yaml up -d --force-recreate
+ExecStop=/usr/bin/podman compose -f deployments/gateway/compose.yaml down
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

@@ -4,16 +4,17 @@ gateways:
     account_id: "00000000000000000000000000000000"
     tunnel_id: "00000000-0000-0000-0000-000000000001"
     api_token: REPLACE_WITH_MANAGEMENT_TOKEN
+    tunnel_token: REPLACE_WITH_CONNECTOR_TOKEN
 routes:
   - gateway: public
     hostname: app.example.com
-    service: http://paseo-web.apps.svc.cluster.local:8080
+    service: http://127.0.0.1:8080
     state: present
     probe_path: /healthz
     probe_status: 200
   - gateway: public
     hostname: alternate.example.com
-    service: http://paseo-web.apps.svc.cluster.local:8080
+    service: http://127.0.0.1:8080
     state: present
     probe_path: /healthz
     probe_status: 200

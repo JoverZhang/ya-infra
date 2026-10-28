@@ -81,7 +81,6 @@ func TestEncryptedRendering(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	encrypt("gateway/connector", "secret.example.yaml", "secret.sops.yaml")
 	encrypt("apps/paseo/kubernetes", "secret.example.yaml", "secret.sops.yaml")
 	encrypt("apps/tbg/kubernetes", "config.example.yaml", "config.sops.yaml")
 	render := func(dir string) []byte {

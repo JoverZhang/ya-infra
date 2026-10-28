@@ -1,0 +1,32 @@
+name: ya-infra-gateway
+
+services:
+  public:
+    image: docker.io/cloudflare/cloudflared@sha256:18626b1baac4450214535cd5bc40ef44c0635244d585ebf707749c22b6f3408f
+    container_name: ya-infra-gateway-public
+    user: "65532:65532"
+    network_mode: host
+    restart: always
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1
+    mem_limit: 512m
+    pids_limit: 128
+    command: [tunnel, --no-autoupdate, --metrics, "127.0.0.1:20243", run, --token-file, /run/secrets/tunnel-token]
+    healthcheck:
+      test: [CMD, cloudflared, tunnel, --metrics, "127.0.0.1:20243", ready]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    secrets:
+      - source: ya-infra-gateway-public
+        target: tunnel-token
+        uid: "65532"
+        gid: "65532"
+        mode: "0400"
+
+secrets:
+  ya-infra-gateway-public:
+    external: true

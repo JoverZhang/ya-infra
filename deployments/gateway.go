@@ -351,22 +351,18 @@ func checkCredentials(c *cloudflareClient, routes []Route) error {
 
 func gateway(args []string) error {
 	if len(args) == 0 || args[0] == "--help" {
-		fmt.Println("Usage: ya-infra gateway <diff|apply|status|verify|check-credentials|setup> [hostname]\nRoutes use explicit service URLs in gateway/config.sops.yaml.\nsetup --edit opens SOPS for credential editing. Other commands do not prompt.\nMissing declarations preserve remote resources; state: absent requests owned deletion.")
+		fmt.Println("Usage: ya-infra gateway <diff|apply|status|verify|check-credentials> [hostname]\n       ya-infra gateway prepare [gateway]\n       ya-infra gateway setup [--edit]\nRead ./config.sops.yaml from the invocation directory.\nprepare writes only connector tokens to rootless Podman secrets; recreate containers after rotation.\nsetup --edit opens SOPS. Other commands do not prompt.\nMissing declarations preserve remote resources; state: absent requests owned deletion.")
 		return nil
 	}
 	action := args[0]
-	allowed := map[string]bool{"diff": true, "apply": true, "status": true, "verify": true, "check-credentials": true, "setup": true}
+	allowed := map[string]bool{"diff": true, "apply": true, "status": true, "verify": true, "check-credentials": true, "setup": true, "prepare": true}
 	if !allowed[action] {
 		return errors.New("unknown Gateway action; use gateway --help")
-	}
-	config, err := host.Load()
-	if err != nil {
-		return err
 	}
 	if action == "setup" {
 		flags := flag.NewFlagSet("gateway setup", flag.ContinueOnError)
 		edit := flags.Bool("edit", false, "edit credentials with SOPS")
-		if err = flags.Parse(args[1:]); err != nil {
+		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
 		if flags.NArg() != 0 {
@@ -374,16 +370,23 @@ func gateway(args []string) error {
 		}
 		fmt.Println("Create a Cloudflare management token with Account / Cloudflare One Connector: cloudflared / Edit, Zone / DNS / Edit, and Zone / Zone / Read. Limit it to the configured account and zone. Check the entire client-IP filter rule. Use https://dash.cloudflare.com/profile/api-tokens/")
 		if *edit {
-			return host.Run("sops", "--config", filepath.Join(config.Source, ".sops.yaml"), filepath.Join(config.Source, "gateway", "config.sops.yaml"))
+			return host.Run("sops", "config.sops.yaml")
 		}
 		return nil
 	}
 	if len(args) > 2 {
-		return errors.New("expected at most one hostname")
+		return errors.New("expected at most one hostname, or one gateway for prepare")
 	}
-	declarations, err := loadGateway(config.Source)
+	declarations, err := loadGateway()
 	if err != nil {
 		return err
+	}
+	if action == "prepare" {
+		name := ""
+		if len(args) == 2 {
+			name = args[1]
+		}
+		return prepareConnectorSecrets(declarations, name)
 	}
 	grouped := map[string][]Route{}
 	for _, route := range declarations.Routes {
@@ -418,19 +421,9 @@ func gateway(args []string) error {
 		}
 		var lock *os.File
 		if action == "apply" {
-			if err = os.MkdirAll(g.stateDir, 0700); err != nil {
-				return err
-			}
-			if err = os.Chmod(g.stateDir, 0700); err != nil {
-				return err
-			}
-			lock, err = os.OpenFile(filepath.Join(g.stateDir, "manage.lock"), os.O_CREATE|os.O_RDWR, 0600)
+			lock, err = lockGateway(g.stateDir)
 			if err != nil {
 				return err
-			}
-			if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-				lock.Close()
-				return errors.New("another Gateway operation holds the lock")
 			}
 		}
 		for _, route := range grouped[name] {
@@ -466,6 +459,24 @@ func gateway(args []string) error {
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func lockGateway(dir string) (*os.File, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, "manage.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lock.Close()
+		return nil, errors.New("another Gateway operation holds the lock")
+	}
+	return lock, nil
 }
 func verifyRoute(route Route) error {
 	if route.State == "absent" {
