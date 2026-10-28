@@ -34,3 +34,5 @@ Host networking preserves the native database URLs. Set `CPE_WEB_PORT` to the
 checkout's Web port and keep its existing Tunnel origin. Confirm external access
 authentication at the proxy. Database health gates initial application startup;
 `unless-stopped` handles runtime restart and the configured runtime boot recovery.
+Daemon also waits for `cpe-client doctor` before execution because native boot
+recovery does not apply Compose dependency health ordering.

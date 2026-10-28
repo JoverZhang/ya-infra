@@ -54,7 +54,13 @@ services:
     volumes: ["mongo_config:/data/configdb"]
   daemon:
     <<: *runtime
-    command: [computed-parameter-engine]
+    # Native boot recovery starts containers without Compose health ordering.
+    command:
+      - sh
+      - -ec
+      - |
+        until cpe-client doctor >/dev/null 2>&1; do sleep 2; done
+        exec computed-parameter-engine
     environment:
       RUST_LOG: ${RUST_LOG:-info}
   web:
