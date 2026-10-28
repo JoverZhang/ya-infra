@@ -54,6 +54,10 @@ public HTTP; use the app's own check for authenticated WebSocket behavior.
 checkout is `~/ya-infra`; set `WorkingDirectory` and `ExecStartPre` to your persistent
 deployment directory and built CLI if different. Run `just gateway prepare` there
 before enabling the unit. Keep that checkout and its `.bin` executable available.
+The service must find the age key without shell exports. Use SOPS' default
+`$XDG_CONFIG_HOME/sops/age/keys.txt` (`~/.config/sops/age/keys.txt` when unset), with
+mode `0600`, or set `Environment=SOPS_AGE_KEY_FILE=/absolute/path/age.key` in a unit
+override. The service user must be able to read both the key and encrypted input.
 The unit prepares secrets, then recreates connectors so they use the current token.
 Stop removes connector containers but keeps external secrets and Cloudflare routes.
 Enable user lingering if boot must work before login.
