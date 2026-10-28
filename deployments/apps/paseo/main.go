@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -61,11 +60,7 @@ func run(args []string) error {
 		if flags.NArg() != 0 {
 			return errors.New("build takes no positional arguments")
 		}
-		c, err := host.Load()
-		if err != nil {
-			return err
-		}
-		if err = prepareArtifacts(*artifacts); err != nil {
+		if err := prepareArtifacts(*artifacts); err != nil {
 			return err
 		}
 		temp, err := os.MkdirTemp("", "ya-infra-paseo-build-")
@@ -78,7 +73,7 @@ func run(args []string) error {
 			if err = os.Mkdir(context, 0700); err != nil {
 				return err
 			}
-			base := filepath.Join(c.Source, "apps", "paseo", "images", image)
+			base := filepath.Join("images", image)
 			if err = host.CopyFile(filepath.Join(base, "Containerfile"), filepath.Join(context, "Containerfile")); err != nil {
 				return err
 			}
@@ -89,7 +84,7 @@ func run(args []string) error {
 				if err = host.CopyFile(filepath.Join(base, "codex.toml"), filepath.Join(context, "codex.toml")); err != nil {
 					return err
 				}
-				if err = host.BuildHelper(c.Source, "./apps/paseo/images/daemon", filepath.Join(context, "initialize")); err != nil {
+				if err = host.BuildHelper("../..", "./apps/paseo/images/daemon", filepath.Join(context, "initialize")); err != nil {
 					return err
 				}
 			} else {
@@ -109,7 +104,9 @@ func run(args []string) error {
 		flags := flag.NewFlagSet("verify", flag.ContinueOnError)
 		web := flags.String("web-url", "", "forwarded Web origin")
 		daemon := flags.String("daemon-url", "", "forwarded daemon origin")
-		secretFile := flags.String("secret-file", "", "encrypted native daemon Secret; defaults to this app")
+		secretFile := flags.String("secret-file", "config.sops.env", "encrypted Compose environment")
+		passwordKey := flags.String("password-key", "PASEO_PASSWORD", "environment key for the selected daemon password")
+		hostnamesKey := flags.String("hostnames-key", "PASEO_HOSTNAMES", "environment key for the selected daemon hostnames")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -119,31 +116,13 @@ func run(args []string) error {
 		if err := host.Probe(strings.TrimRight(*web, "/")+"/healthz", 200); err != nil {
 			return err
 		}
-		if *secretFile == "" {
-			c, err := host.Load()
-			if err != nil {
-				return err
-			}
-			*secretFile = filepath.Join(c.Source, "apps/paseo/kubernetes/secret.sops.yaml")
-		}
-		var secret struct {
-			APIVersion string            `yaml:"apiVersion"`
-			Kind       string            `yaml:"kind"`
-			Metadata   map[string]any    `yaml:"metadata"`
-			Type       string            `yaml:"type"`
-			Data       map[string]string `yaml:"data"`
-		}
-		if err := host.Decrypt(*secretFile, &secret); err != nil {
+		var values map[string]string
+		if err := host.Decrypt(*secretFile, &values); err != nil {
 			return err
 		}
-		password, err := base64.StdEncoding.DecodeString(secret.Data["PASEO_PASSWORD"])
-		if err != nil || len(password) == 0 {
-			return errors.New("daemon Secret has no valid password")
-		}
-		defer clear(password)
-		names, err := base64.StdEncoding.DecodeString(secret.Data["PASEO_HOSTNAMES"])
-		if err != nil {
-			return errors.New("invalid daemon hostname configuration")
+		password, names := values[*passwordKey], values[*hostnamesKey]
+		if password == "" {
+			return errors.New("encrypted environment has no selected daemon password")
 		}
 		endpoint, err := url.Parse(*daemon)
 		if err != nil || endpoint.User != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
@@ -153,15 +132,15 @@ func run(args []string) error {
 		if ip := net.ParseIP(endpoint.Hostname()); ip != nil && ip.IsLoopback() {
 			allowed = true
 		}
-		for _, name := range strings.Split(string(names), ",") {
+		for _, name := range strings.Split(names, ",") {
 			if name == endpoint.Hostname() {
 				allowed = true
 			}
 		}
 		if !allowed {
-			return errors.New("daemon-url hostname is not declared in the daemon Secret")
+			return errors.New("daemon-url hostname is not declared in the encrypted environment")
 		}
-		if err = verifyAPI(strings.TrimRight(*daemon, "/"), string(password)); err != nil {
+		if err = verifyAPI(strings.TrimRight(*daemon, "/"), password); err != nil {
 			return err
 		}
 		port := endpoint.Port()
@@ -185,7 +164,7 @@ func run(args []string) error {
 		}
 		cmd := exec.CommandContext(ctx, "paseo", "ls", "--host", connection, "--json")
 		// Paseo 0.9.1 resolves the client ID from HOME even with PASEO_HOME set.
-		cmd.Env = append(os.Environ(), "PASEO_PASSWORD="+string(password), "HOME="+clientHome, "PASEO_HOME="+filepath.Join(clientHome, ".paseo"))
+		cmd.Env = append(os.Environ(), "PASEO_PASSWORD="+password, "HOME="+clientHome, "PASEO_HOME="+filepath.Join(clientHome, ".paseo"))
 		probeErr := cmd.Run()
 		cleanupErr := os.RemoveAll(clientHome)
 		if probeErr != nil {

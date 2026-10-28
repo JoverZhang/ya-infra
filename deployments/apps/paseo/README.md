@@ -1,31 +1,37 @@
 # Paseo
 
-One Kustomization assembles the Web UI and daemon workloads. Each daemon has a
-Deployment, Service, Secret, home PVC, and workspace PVC. Duplicate these native
-resources to add a daemon; add its Secret to `ksops.yaml`. Give it a unique password
-and volume claims. Web has no daemon volumes. Set allowed hostnames and browser
-origins in the daemon Secret; Gateway does not alter application configuration.
+One Compose project contains Web and native daemon services. Each daemon owns its
+password, home volume (sessions and Codex login), and workspace volume. Web mounts
+neither. Add a daemon by copying a Compose service and declaring separate external
+volumes and environment keys; no instance abstraction or registry is involved.
+
+Run hooks from this directory:
 
 ```sh
-go -C deployments build -o .bin/paseo ./apps/paseo
-deployments/.bin/paseo --help
-deployments/.bin/paseo build
+go run . build
+go run . verify --web-url http://127.0.0.1:16780 --daemon-url http://127.0.0.1:16770
 ```
 
-Build uses a verified public program snapshot from the cache or installed programs
-with matching versions. `--artifacts` selects a snapshot explicitly. It excludes
-credentials and rejects escaping symlinks. Image recipes and helpers are under
-`images/`. The hook prints local image digests; it does not publish, import, or edit
-manifests. For an upgrade, update version pins, prepare a matching snapshot, build,
-and update the affected image references. A Web-only change updates only Web.
+Build reads `images/` and a verified public program snapshot (`--artifacts` selects
+one explicitly). It excludes credentials, checks versions and hashes, and prints
+local image digests. Update the pins and snapshot together for an upgrade, then
+set the desired image references in `config.sops.env` and recreate with Compose.
 
-The init container requires a verified restore marker on both volumes. For a new
-daemon only, explicitly add `--new` to its init command. It writes initialization
-markers; remove the flag after the first successful start. [Migration](../../docs/migration.md)
-owns restore verification and activation.
+For **new** daemon data only, create the two named volumes, select them in the
+encrypted environment, then run this from the repository root before starting:
 
-Use native Paseo pairing and the upstream Web UI. Login runs explicitly inside the
-selected daemon after storage is ready. Keep each login cache with its daemon.
-`verify --web-url URL --daemon-url URL` checks HTTP authentication and an authenticated
-WebSocket session list. It sends no model request. `--secret-file` selects another
-daemon's encrypted native Secret. Use loopback forwarding or a declared daemon hostname.
+```sh
+just compose paseo --podman-run-args='--cap-add=CHOWN --cap-add=FOWNER --cap-add=DAC_OVERRIDE' \
+  run --rm --user 0 --entrypoint /opt/infra/initialize demo --new
+```
+
+The one-off initializer needs ownership permissions; the daemon drops them.
+Existing volumes need no initialization or data copy. Keep their ownership and
+contents. Use native Codex login and Paseo pairing in the selected container.
+[Takeover](../../docs/migration.md) covers backup and exclusive access to the data.
+
+Verify reads `config.sops.env` (`--secret-file` selects another file). It checks
+HTTP authentication and a native authenticated WebSocket session list, without a
+model request or host login changes. `--password-key` and `--hostnames-key` select
+another daemon's environment keys. Allowed hostnames and browser origins belong
+to the app's environment; Gateway does not change them.

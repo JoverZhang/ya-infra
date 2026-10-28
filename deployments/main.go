@@ -18,14 +18,12 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("Usage: ya-infra <bootstrap|kubectl|gateway> [arguments]\n  bootstrap [--local]   Install pinned client tools; optionally reconcile the local server.\n  kubectl ...           Forward native arguments using the configured default context.\n  gateway --help        Manage Cloudflare routes.")
+		fmt.Println("Usage: ya-infra <bootstrap|gateway> [arguments]\n  bootstrap             Install pinned SOPS and age tools.\n  gateway --help        Manage Cloudflare routes.\nUse just compose <app> ... for native container commands.")
 		return nil
 	}
 	switch args[0] {
 	case "bootstrap":
 		return bootstrap(args[1:])
-	case "kubectl":
-		return kubectl(args[1:])
 	case "gateway":
 		return gateway(args[1:])
 	default:

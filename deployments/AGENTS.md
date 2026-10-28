@@ -1,14 +1,11 @@
 # Deployments
 
-Kubernetes runs applications; SOPS protects source configuration; Gateway manages Cloudflare.
-Each `apps/<app>/` owns native resources, image inputs, and optional explicit Go hooks.
+Native Compose owns applications; SOPS protects configuration; Go owns Gateway and explicit app hooks.
 
 | Task | Read |
 | --- | --- |
-| First use, encrypted rendering | [README](README.md) |
-| Add an application | [Example](examples/app/kubernetes/) |
-| Host setup | [Bootstrap](bootstrap.go), [native server input](kubernetes/bootstrap/) |
-| Image, data, or app hooks | The app's `README.md`, `main.go`, and `images/` |
-| Tunnel or DNS | [Gateway](gateway/README.md) |
-| Validation | [Checks](checks/README.md) |
-| Existing deployment cutover or recovery | [Migration](docs/migration.md) |
+| Operate, add an app, or enable startup | [README](README.md) |
+| App configuration, image upgrades, or hooks | That app's `README.md`, `compose.yaml`, and `main.go` |
+| Cloudflare routes or connector | [Gateway](gateway/README.md) |
+| Data, takeover, or rollback | [Migration](docs/migration.md) |
+| Validate a change | [Checks](checks/README.md) |

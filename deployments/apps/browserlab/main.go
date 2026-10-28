@@ -25,19 +25,15 @@ func run(args []string) error {
 		if len(args) != 1 {
 			return errors.New("build takes no arguments")
 		}
-		c, err := host.Load()
-		if err != nil {
-			return err
-		}
 		temp, err := os.MkdirTemp("", "ya-infra-browser-build-")
 		if err != nil {
 			return err
 		}
 		defer os.RemoveAll(temp)
-		if err = host.CopyFile(filepath.Join(c.Source, "apps/browserlab/images/browser/Containerfile"), filepath.Join(temp, "Containerfile")); err != nil {
+		if err = host.CopyFile("images/browser/Containerfile", filepath.Join(temp, "Containerfile")); err != nil {
 			return err
 		}
-		if err = host.BuildHelper(c.Source, "./apps/browserlab/images/browser", filepath.Join(temp, "browserlab")); err != nil {
+		if err = host.BuildHelper("../..", "./apps/browserlab/images/browser", filepath.Join(temp, "browserlab")); err != nil {
 			return err
 		}
 		return host.BuildImage(temp, "localhost/ya-infra-browserlab:1.7.22")

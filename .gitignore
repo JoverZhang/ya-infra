@@ -3,3 +3,7 @@
 config.toml
 infra.toml
 /.data
+/.sops.yaml
+**/config.sops.yaml
+**/config.sops.env
+/deployments/apps/*/compose.override.yaml

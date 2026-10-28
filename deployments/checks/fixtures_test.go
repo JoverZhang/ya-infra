@@ -3,42 +3,31 @@
 package checks
 
 import (
-	"bytes"
-	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
-func fixtureResource[T any](t *testing.T, name string, substitutions ...string) T {
+func sopsFixture(t *testing.T, dir string) (string, string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", name))
+	key := filepath.Join(dir, "age.key")
+	if out, err := exec.Command("age-keygen", "-o", key).CombinedOutput(); err != nil {
+		t.Fatalf("fixture key: %v %s", err, out)
+	}
+	recipient, err := exec.Command("age-keygen", "-y", key).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var resource T
-	if err := yaml.Unmarshal([]byte(strings.NewReplacer(substitutions...).Replace(string(data))), &resource); err != nil {
+	policy := filepath.Join(dir, ".sops.yaml")
+	data, err := os.ReadFile("../.sops.yaml")
+	if err != nil {
 		t.Fatal(err)
 	}
-	return resource
-}
-
-func decodeDocuments[T any](t *testing.T, data []byte) []T {
-	t.Helper()
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	var resources []T
-	for {
-		var resource T
-		err := decoder.Decode(&resource)
-		if err == io.EOF {
-			return resources
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		resources = append(resources, resource)
+	data = []byte(strings.ReplaceAll(string(data), "REPLACE_WITH_YOUR_PUBLIC_AGE_RECIPIENT", strings.TrimSpace(string(recipient))))
+	if err := os.WriteFile(policy, data, 0600); err != nil {
+		t.Fatal(err)
 	}
+	return key, policy
 }

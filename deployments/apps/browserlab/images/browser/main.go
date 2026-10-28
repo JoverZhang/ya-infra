@@ -12,8 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,29 +27,11 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("use prepare-image, prepare-profile, desktop, or relay")
+		return errors.New("use prepare-image, desktop, or relay")
 	}
 	switch args[0] {
 	case "prepare-image":
 		return prepareImage()
-	case "prepare-profile":
-		if _, err := os.Stat("/config/.ya-infra-restored"); err != nil {
-			return errors.New("browser profile requires a verified restore marker")
-		}
-		uid, err := strconv.Atoi(os.Getenv("PUID"))
-		if err != nil {
-			return err
-		}
-		gid, err := strconv.Atoi(os.Getenv("PGID"))
-		if err != nil {
-			return err
-		}
-		return filepath.WalkDir("/config", func(path string, item os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			return os.Lchown(path, uid, gid)
-		})
 	case "desktop":
 		if err := os.Chmod("/", 0755); err != nil {
 			return err
@@ -127,6 +107,13 @@ func prepareImage() error {
 		data = bytes.Replace(data, []byte("rm -f /run/dbus/pid"), []byte("rm -f /run/dbus/pid\nrm -f /run/dbus/system_bus_socket"), 1)
 	}
 	if err = os.WriteFile(path, data, 0755); err != nil {
+		return err
+	}
+	// Let the upstream supervisor restart the loopback CDP relay with Chromium.
+	if err := os.MkdirAll("/etc/services.d/browserlab-cdp", 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile("/etc/services.d/browserlab-cdp/run", []byte("#!/usr/bin/execlineb -P\n/usr/local/bin/browserlab relay 0.0.0.0:9223 127.0.0.1:9222\n"), 0755); err != nil {
 		return err
 	}
 	const keyURL = "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"

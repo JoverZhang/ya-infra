@@ -8,10 +8,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"syscall"
 
 	"github.com/JoverZhang/ya-infra/deployments/internal/host"
@@ -26,32 +28,48 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 || args[0] == "--help" {
-		fmt.Println("Usage: tbg setup | verify [--url URL]\nSetup reconciles the host client file. Verify checks the local protocol without sending messages.")
+		fmt.Println("Usage: tbg setup [--secret-name NAME] | verify [--url URL]\nSetup prepares config.sops.yaml for Compose and reconciles the host client file. Verify checks the local protocol without sending messages.")
 		return nil
 	}
 	switch args[0] {
 	case "setup":
-		if len(args) != 1 {
-			return errors.New("setup takes no arguments")
-		}
-		c, err := host.Load()
-		if err != nil {
+		flags := flag.NewFlagSet("setup", flag.ContinueOnError)
+		secret := flags.String("secret-name", "ya-infra-tbg-server", "native Podman secret name")
+		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		data, err := host.Plaintext(filepath.Join(c.Source, "apps/tbg/host/client.sops.yaml"))
+		if flags.NArg() != 0 {
+			return errors.New("setup takes no positional arguments")
+		}
+		data, err := host.Plaintext("config.sops.yaml")
 		if err != nil {
 			return err
 		}
 		defer clear(data)
-		var client struct {
+		// Inspect only fields shared with the host client and Compose volume.
+		// Preserve all other native TBG settings in the runtime secret.
+		var server struct {
+			Listen  string `yaml:"listen"`
+			DataDir string `yaml:"data_dir"`
+		}
+		if err := yaml.Unmarshal(data, &server); err != nil {
+			// Decoder errors can contain plaintext values from this secret file.
+			return errors.New("decode config.sops.yaml: invalid native TBG configuration; details withheld")
+		}
+		hostname, port, err := net.SplitHostPort(server.Listen)
+		if err != nil {
+			return errors.New("TBG listen must be an explicit loopback endpoint")
+		}
+		number, err := strconv.Atoi(port)
+		if err != nil || hostname != "127.0.0.1" || number < 1024 || number > 65535 || server.DataDir != "/var/lib/tbg" {
+			return errors.New("TBG needs an unprivileged 127.0.0.1 listener and data_dir /var/lib/tbg")
+		}
+		client, err := yaml.Marshal(struct {
 			Host string `yaml:"host"`
 			Port int    `yaml:"port"`
-		}
-		if err = host.Decode(data, &client); err != nil {
+		}{hostname, number})
+		if err != nil {
 			return err
-		}
-		if client.Host != "127.0.0.1" || client.Port < 1024 || client.Port > 65535 {
-			return errors.New("host client must use an unprivileged loopback endpoint")
 		}
 		if _, err = exec.LookPath("tbg"); err != nil {
 			return err
@@ -68,7 +86,11 @@ func run(args []string) error {
 		if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			return errors.New("another TBG setup holds the lock")
 		}
-		return installClient(filepath.Join(host.XDG("XDG_CONFIG_HOME", ".config"), "tbg/client.yaml"), data, filepath.Join(stateDir, "client.json"))
+		if err := installClient(filepath.Join(host.XDG("XDG_CONFIG_HOME", ".config"), "tbg/client.yaml"), client, filepath.Join(stateDir, "client.json")); err != nil {
+			return err
+		}
+		_, err = host.PrepareSecret(*secret, "ya-infra.app", "tbg", data)
+		return err
 	case "verify":
 		flags := flag.NewFlagSet("verify", flag.ContinueOnError)
 		url := flags.String("url", "http://127.0.0.1:18473/v1/whoami", "local protocol endpoint")

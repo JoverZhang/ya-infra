@@ -2,7 +2,7 @@
 
 Go manages DNS and remotely managed Tunnel ingress. Rootless Podman Compose runs
 cloudflared. Gateway commands read only `./config.sops.yaml` in the invocation
-directory; they need no Kubernetes context or source-directory configuration.
+directory.
 
 ## Configure and run
 
@@ -10,13 +10,13 @@ Install Podman, **podman-compose**, SOPS, Go, and just. `podman compose` delegat
 an external provider; select podman-compose because this file uses native Podman
 external secrets. Use the same provider in your shell and the supplied user unit.
 
-Set your public age recipient in the SOPS policy. Keep its private key outside Git.
+Use the [SOPS policy setup](../README.md#start-and-operate). Keep the private key outside Git.
 Encrypt [config.example.yaml](config.example.yaml) as `config.sops.yaml` in your
 deployment directory. The example contains both credentials: the management API
 token is used only by Go; `tunnel_token` is used only by the connector.
 
 ```sh
-sops --config deployments/.sops.yaml encrypt \
+sops --config .sops.yaml encrypt \
   --filename-override config.sops.yaml \
   --output config.sops.yaml deployments/gateway/config.example.yaml
 just gateway setup --edit
@@ -54,10 +54,8 @@ public HTTP; use the app's own check for authenticated WebSocket behavior.
 checkout is `~/ya-infra`; set `WorkingDirectory` and `ExecStartPre` to your persistent
 deployment directory and built CLI if different. Run `just gateway prepare` there
 before enabling the unit. Keep that checkout and its `.bin` executable available.
-The service must find the age key without shell exports. Use SOPS' default
-`$XDG_CONFIG_HOME/sops/age/keys.txt` (`~/.config/sops/age/keys.txt` when unset), with
-mode `0600`, or set `Environment=SOPS_AGE_KEY_FILE=/absolute/path/age.key` in a unit
-override. The service user must be able to read both the key and encrypted input.
+Configure [persistent SOPS key access](../README.md#start-at-login-or-boot) for the
+service user, which must also be able to read the encrypted input.
 The unit prepares secrets, then recreates connectors so they use the current token.
 Stop removes connector containers but keeps external secrets and Cloudflare routes.
 Enable user lingering if boot must work before login.
@@ -82,8 +80,8 @@ again if any origin changed after takeover.
 For a previous two-file Gateway input, copy the decrypted `gateways` and `routes`
 into the new encrypted entry and add each connector token. Keep all identities,
 hostnames, origins, and the ownership state unchanged. Perform this with private
-files or in memory; never print credentials. The old `source` and `kube_context`
-entry belongs to the remaining app tooling and is not a Gateway input.
+files or in memory; never print credentials. Retire the former entry files only
+after the new input and takeover have been verified.
 
 ## Ownership and recovery
 

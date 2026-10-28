@@ -1,3 +1,0 @@
-# Encrypt this file as ./config.sops.yaml in the invocation directory.
-source: ./deployments
-kube_context: home

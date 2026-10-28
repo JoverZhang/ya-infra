@@ -1,0 +1,18 @@
+services:
+  check:
+    image: docker.io/library/node@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
+    network_mode: none
+    environment:
+      TOKEN: ${TOKEN:?decrypt the fixture first}
+    command: [node, -e, "const fs=require('fs'); if(!fs.existsSync('/data/retained')) fs.writeFileSync('/data/retained', 'keep'); setInterval(() => {}, 1000)"]
+    volumes:
+      - data:/data
+      - type: bind
+        source: ./asset
+        target: /asset
+        read_only: true
+        bind: {create_host_path: false}
+volumes:
+  data:
+    external: true
+    name: ${DATA_VOLUME:?set the fixture volume}
