@@ -51,7 +51,7 @@ services:
       service: mongo
     pull_policy: never
     restart: unless-stopped
-    volumes: ["mongo_data:/data/db", "mongo_config:/data/configdb"]
+    volumes: ["mongo_config:/data/configdb"]
   daemon:
     <<: *runtime
     command: [computed-parameter-engine]
