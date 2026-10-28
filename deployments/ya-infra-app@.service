@@ -1,0 +1,15 @@
+[Unit]
+Description=ya-infra Compose application %i
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/ya-infra
+Environment=PATH=%h/.local/share/ya-infra/bin:%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=/usr/bin/just --justfile %h/ya-infra/justfile compose %i up -d --force-recreate
+ExecStop=/usr/bin/just --justfile %h/ya-infra/justfile compose %i down
+TimeoutStartSec=180
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

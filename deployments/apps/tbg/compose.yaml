@@ -1,0 +1,26 @@
+name: ya-infra-tbg
+
+services:
+  gateway:
+    image: localhost/telegram-bot-gateway@sha256:a3b2e40e598803c5e71215ba86d72da704a82c6491b96be85de4492c79174d38
+    pull_policy: never
+    network_mode: host
+    restart: always
+    entrypoint: [/bin/sh, -ec]
+    command: ["test -s /var/lib/tbg/gateway.sqlite; exec tbg-gateway"]
+    volumes: ["data:/var/lib/tbg"]
+    secrets:
+      - source: ya-infra-tbg-server
+        target: /root/.config/tbg/server.yaml
+        uid: "0"
+        gid: "0"
+        mode: "0400"
+
+volumes:
+  data:
+    external: true
+    name: ${TBG_DATA_VOLUME:-tbg-data}
+
+secrets:
+  ya-infra-tbg-server:
+    external: true

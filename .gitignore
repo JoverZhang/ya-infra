@@ -3,3 +3,6 @@
 config.toml
 infra.toml
 /.data
+/.sops.yaml
+**/config.sops.yaml
+**/config.sops.env

@@ -11,15 +11,27 @@ _build:
 default: _build
     @exec {{quote(justfile_directory() / ".bin/ya-infra")}} --help
 
-# Install client tools and optional local cluster prerequisites.
+# Install pinned SOPS and age tools.
 [no-cd]
 bootstrap *args: _build
     @exec {{quote(justfile_directory() / ".bin/ya-infra")}} bootstrap "$@"
 
-# Forward native kubectl arguments.
+# Forward native Compose arguments; encrypted environment values stay in memory.
 [no-cd]
-kubectl *args: _build
-    @exec {{quote(justfile_directory() / ".bin/ya-infra")}} kubectl "$@"
+compose app *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{quote(justfile_directory() / "apps")}}/"$1"
+    shift
+    export PODMAN_COMPOSE_PROVIDER=podman-compose
+    if [[ -f config.sops.env ]]; then
+        command="exec podman compose"
+        for argument in "$@"; do
+            command+=" '${argument//\'/\'\\\'\'}'"
+        done
+        exec sops exec-env --same-process config.sops.env "$command"
+    fi
+    exec podman compose "$@"
 
 # Manage Cloudflare routes.
 [no-cd]

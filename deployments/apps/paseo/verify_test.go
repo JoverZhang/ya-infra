@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -58,9 +56,7 @@ func TestVerifyLeavesHostUnchanged(t *testing.T) {
 	}))
 	defer server.Close()
 	secret := filepath.Join(root, "secret.yaml")
-	data := fmt.Sprintf("apiVersion: v1\nkind: Secret\ndata:\n  PASEO_PASSWORD: %s\n  PASEO_HOSTNAMES: %s\n",
-		base64.StdEncoding.EncodeToString([]byte("disposable-password")),
-		base64.StdEncoding.EncodeToString([]byte("127.0.0.1")))
+	data := "PASEO_PASSWORD: disposable-password\nPASEO_HOSTNAMES: 127.0.0.1\n"
 	if err := os.WriteFile(secret, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}

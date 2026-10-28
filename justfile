@@ -6,15 +6,15 @@ set positional-arguments
 default:
     @just --justfile {{quote(justfile_directory() / "deployments/justfile")}}
 
-# Install client tools and optional local cluster prerequisites.
+# Install pinned SOPS and age tools.
 [no-cd]
 bootstrap *args:
     @exec just --justfile {{quote(justfile_directory() / "deployments/justfile")}} bootstrap "$@"
 
-# Forward native kubectl arguments.
+# Forward native Compose arguments for an application.
 [no-cd]
-kubectl *args:
-    @exec just --justfile {{quote(justfile_directory() / "deployments/justfile")}} kubectl "$@"
+compose app *args:
+    @exec just --justfile {{quote(justfile_directory() / "deployments/justfile")}} compose "$@"
 
 # Manage Cloudflare routes.
 [no-cd]

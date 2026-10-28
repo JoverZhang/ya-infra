@@ -1,0 +1,35 @@
+name: ya-infra-browserlab
+
+services:
+  browser:
+    image: ${BROWSERLAB_IMAGE:?build and select the browser image}
+    pull_policy: never
+    restart: always
+    shm_size: 4g
+    devices: ["/dev/dri:/dev/dri"]
+    ports: ["127.0.0.1:${BROWSERLAB_DESKTOP_PORT:-43000}:3000", "127.0.0.1:${BROWSERLAB_CDP_PORT:-9222}:9223"]
+    environment:
+      PUID: ${BROWSERLAB_UID:?set the profile owner UID}
+      PGID: ${BROWSERLAB_GID:?set the profile owner GID}
+      TZ: ${BROWSERLAB_TZ:-UTC}
+      START_DOCKER: "false"
+      OPENCLI_WINDOW: foreground
+      BROWSERLAB_CDP_RELAY_PORT: "9223"
+      BROWSERLAB_CDP_CHROME_PORT: "9222"
+      CHROME_CLI: --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 --no-first-run
+    volumes:
+      - type: bind
+        source: ${BROWSERLAB_PROFILE:?select the existing profile directory}
+        target: /config
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${BROWSERLAB_WORKSPACE:?select the host workspace directory}
+        target: /workspace/lab
+        read_only: true
+        bind: {create_host_path: false}
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:9223/json/version]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 90s

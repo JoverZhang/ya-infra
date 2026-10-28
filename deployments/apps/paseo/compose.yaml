@@ -1,0 +1,54 @@
+name: ya-infra-paseo
+
+services:
+  web:
+    image: ${PASEO_WEB_IMAGE:?build and select the Web image}
+    pull_policy: never
+    user: "101:101"
+    restart: always
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.5
+    mem_limit: 128m
+    ports: ["127.0.0.1:${PASEO_WEB_PORT:-16780}:8080"]
+    tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777"]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/healthz]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  demo:
+    image: ${PASEO_IMAGE:?build and select the daemon image}
+    pull_policy: never
+    user: "1000:1000"
+    restart: always
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 4g
+    ports: ["127.0.0.1:${PASEO_PORT:-16770}:6767"]
+    environment:
+      PASEO_PASSWORD: ${PASEO_PASSWORD:?set the daemon password}
+      PASEO_HOSTNAMES: ${PASEO_HOSTNAMES:?set allowed daemon hostnames}
+      PASEO_CORS_ORIGINS: ${PASEO_CORS_ORIGINS:?set allowed browser origins}
+      PASEO_DICTATION_ENABLED: "false"
+      PASEO_VOICE_MODE_ENABLED: "false"
+      PASEO_RELAY_ENABLED: "false"
+    volumes: ["home:/home/paseo", "workspace:/workspace"]
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=512m,mode=1777"]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:6767/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  home:
+    external: true
+    name: ${PASEO_HOME_VOLUME:?select an existing home volume}
+  workspace:
+    external: true
+    name: ${PASEO_WORKSPACE_VOLUME:?select an existing workspace volume}

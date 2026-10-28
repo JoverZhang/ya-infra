@@ -1,4 +1,4 @@
-// This binary runs only in the Pod's init container.
+// Run explicitly to prepare new or verified restored daemon volumes.
 package main
 
 import (

@@ -1,88 +1,69 @@
 # Deployments
 
-Start with [Gateway](gateway/README.md) for rootless Compose and Cloudflare routes.
-The application tooling below still uses native Kubernetes resources. Keep its
-legacy entry configuration in a separate invocation directory from Gateway.
-[AGENTS.md](AGENTS.md) routes task-specific reading.
+Rootless Podman Compose runs each `apps/<app>/compose.yaml`. SOPS protects source
+configuration. [Gateway](gateway/README.md) owns Cloudflare DNS and Tunnel ingress.
 
-## Start
+## Start and operate
 
-Install Go and just. The Go module pins the toolchain; bootstrap pins client tools.
-Run commands from the directory that will contain your entry configuration.
-
-```sh
-just bootstrap
-# Add the printed client-tools directory to PATH in your shell profile.
-age-keygen -o /private/path/age.key
-export SOPS_AGE_KEY_FILE=/private/path/age.key
-```
-
-Set the public age recipient in [`.sops.yaml`](.sops.yaml). Keep the private key outside Git.
-The repository supplies `*.example.yaml`; create each required `*.sops.yaml` locally.
-Encrypted files can be versioned after a privacy review. Public examples are not live configuration.
+Install Go, just, Podman, and **podman-compose**. Run `just bootstrap` to install
+pinned SOPS and age tools; add the printed directory to PATH. Copy
+[`.sops.yaml`](.sops.yaml) to the checkout root and set your public age recipient
+there. Keep the private key outside Git.
 
 ```sh
-sops --config deployments/.sops.yaml encrypt \
-  --filename-override config.sops.yaml \
-  --output config.sops.yaml deployments/config.example.yaml
-sops config.sops.yaml
+cd deployments/apps/paseo
+sops --config ../../../.sops.yaml encrypt --output config.sops.env config.example.env
+sops config.sops.env
+cd ../../..
+just compose paseo up -d
+just compose paseo ps
+just compose paseo logs --tail 50
 ```
 
-Only `./config.sops.yaml` is read. `source` is relative to the invocation directory.
-Use the same encryption command with the owning example and output name for app
-and local-server inputs. Edit sensitive values through SOPS.
+The entry only selects the app directory and podman-compose. If `config.sops.env`
+exists, SOPS supplies its values through the process environment. All remaining
+arguments and exit codes belong to native Compose. Missing keys abort before
+Compose runs. Native `config`, `inspect`, and verbose output can disclose values;
+keep those outputs private. Local encrypted inputs are ignored in this public repo.
+
+`config.sops.env` supplies Compose variables, such as image references, passwords,
+ports, and host paths. An app can also own a native encrypted configuration file;
+[TBG](apps/tbg/README.md) explains its server file and host client setup. Hooks are
+explicit: run `go run . --help` from the app directory. Compose does not call them.
+
+## Data and images
+
+Named data volumes are external. Create new ones explicitly, or select existing
+ones before startup. Missing bind sources fail instead of creating empty folders.
+Compose `down -v` retains external volumes; direct Podman volume deletion does not.
+[Backup and takeover](docs/migration.md) owns recovery and single-writer checks.
+
+Build hooks print image digests. Set the chosen image in the app's encrypted
+environment, recreate its containers, and run that app's verification. Existing
+local images use `pull_policy: never`; a new host must build or load them first.
+
+## Start at login or boot
+
+[ya-infra-app@.service](ya-infra-app@.service) is a native systemd user template.
+Set its checkout paths if your persistent checkout is not `~/ya-infra`. Complete
+app setup first. The unit recreates containers at start and removes them at stop;
+external data and secrets remain. Enable user lingering for startup before login.
+
+SOPS must find its key without shell exports: use
+`$XDG_CONFIG_HOME/sops/age/keys.txt` (default `~/.config/sops/age/keys.txt`, mode 0600),
+or add `Environment=SOPS_AGE_KEY_FILE=/absolute/path/age.key` in a unit override.
 
 ```sh
-just bootstrap --help
-just bootstrap --local              # Optional local system service; requires sudo.
-just kubectl get deploy,pod,svc,pvc -A
-just gateway --help
+install -Dm 0644 deployments/ya-infra-app@.service ~/.config/systemd/user/ya-infra-app@.service
+systemctl --user daemon-reload
+systemctl --user enable --now ya-infra-app@paseo.service
 ```
 
-An existing cluster needs only client tools and a named kubeconfig context. Select
-its storage class in the app manifests. The local cluster Kustomization includes
-local storage; it is not a prerequisite for other clusters.
-Local bootstrap checks services, ports, CIDRs, and a 2 GiB free-space floor. Plan
-additional capacity for application data. Review the distribution's
-[host requirements](https://docs.k3s.io/installation/requirements) before installation.
+## Extend
 
-## Manage native resources
+Copy [the Compose example](examples/app/compose.yaml) into `apps/<name>/`, then set
+its image, mounts, and loopback ports. Add `config.example.env` when interpolation
+needs private values. Add `main.go` only for app-specific setup, build, or verification
+that native tools do not cover. No central service registry needs an edit.
 
-```sh
-just kubectl diff --server-side -k deployments/examples/app/kubernetes
-just kubectl apply --server-side -k deployments/examples/app/kubernetes
-just kubectl -n apps rollout status deployment/app-web
-```
-
-Create the `apps` namespace before using the example. `kubectl` preserves native
-arguments, streams, terminal access, and exit status. An explicit `--context`
-overrides the configured default. Hooks, decryption of resources, and readiness
-checks are separate operations.
-
-For encrypted applications, standalone Kustomize runs KSOPS locally. `ksops.yaml`
-is a generator declaration. It reads encrypted native Secrets (`files`) or packs
-an encrypted app file into a Secret (`secretFrom`). It is never an API resource.
-
-```sh
-umask 077
-mktemp -d                          # Use the returned directory as <private-temp>.
-kustomize build --enable-alpha-plugins --enable-exec \
-  deployments/apps/tbg/kubernetes > <private-temp>/resources.yaml
-just kubectl diff --server-side -f <private-temp>/resources.yaml
-just kubectl apply --server-side -f <private-temp>/resources.yaml
-just kubectl -n apps rollout status deployment/tbg
-rm <private-temp>/resources.yaml
-rmdir <private-temp>
-```
-
-Run the next command only after checking the preceding result. Stop if rendering
-fails. Diff returns 0 for no change, 1 for changes, and greater values for errors.
-Use the same completed manifest for diff and apply; keep native Secret masking
-enabled. Remove the private directory after success, failure, or interruption.
-The [integration checks](checks/README.md) automate this sequence with temporary
-cleanup. Secret content hashes update Pod references; re-encryption alone has no effect.
-
-Normal apply does not prune removed resources. Use explicit native deletion.
-Application hooks are built from `apps/<app>/main.go` and run explicitly; consult
-that app's help. [Migration](docs/migration.md) owns data, image import, cutover,
-and rollback procedures. The included migration workloads start with zero replicas.
+[Checks](checks/README.md) gives the repeatable validation commands.

@@ -1,8 +1,0 @@
-# Use the target cluster's own class when local-path storage is unavailable.
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: ya-infra-local
-provisioner: rancher.io/local-path
-reclaimPolicy: Retain
-volumeBindingMode: WaitForFirstConsumer

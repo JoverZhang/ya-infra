@@ -13,24 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type Config struct {
-	Source  string `yaml:"source"`
-	Context string `yaml:"kube_context"`
-}
-
-func Load() (Config, error) {
-	var c Config
-	if err := Decrypt("config.sops.yaml", &c); err != nil {
-		return c, err
-	}
-	if c.Source == "" || c.Context == "" {
-		return c, errors.New("entry configuration requires source and kube_context")
-	}
-	var err error
-	c.Source, err = filepath.Abs(c.Source)
-	return c, err
-}
-
 func Decode(data []byte, out any) error {
 	d := yaml.NewDecoder(bytes.NewReader(data))
 	d.KnownFields(true)
