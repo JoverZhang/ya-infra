@@ -1,46 +1,101 @@
 # Cloudflare Gateway
 
-The CLI changes Cloudflare DNS and remotely managed Tunnel ingress. Kubernetes
-runs the connector. See [config.example.yaml](config.example.yaml) for the schema.
-Management and connector tokens have separate encrypted inputs.
+Go manages DNS and remotely managed Tunnel ingress. Rootless Podman Compose runs
+cloudflared. Gateway commands read only `./config.sops.yaml` in the invocation
+directory; they need no Kubernetes context or source-directory configuration.
+
+## Configure and run
+
+Install Podman, **podman-compose**, SOPS, Go, and just. `podman compose` delegates to
+an external provider; select podman-compose because this file uses native Podman
+external secrets. Use the same provider in your shell and the supplied user unit.
+
+Set your public age recipient in the SOPS policy. Keep its private key outside Git.
+Encrypt [config.example.yaml](config.example.yaml) as `config.sops.yaml` in your
+deployment directory. The example contains both credentials: the management API
+token is used only by Go; `tunnel_token` is used only by the connector.
 
 ```sh
-just gateway setup                 # Required dashboard permissions.
-just gateway setup --edit          # Edit gateway/config.sops.yaml with SOPS.
+sops --config deployments/.sops.yaml encrypt \
+  --filename-override config.sops.yaml \
+  --output config.sops.yaml deployments/gateway/config.example.yaml
+just gateway setup --edit
 just gateway check-credentials
 just gateway diff
-just gateway apply app.example.com
-just gateway status
-just gateway verify app.example.com
+just gateway prepare
+export PODMAN_COMPOSE_PROVIDER=podman-compose
+podman compose -f deployments/gateway/compose.yaml up -d
+podman compose -f deployments/gateway/compose.yaml ps
+just gateway verify
 ```
 
-Routes name a Gateway and an explicit origin URL. Multiple hostnames can use one
-origin. Each Tunnel has one configured Gateway owner. `state: absent` requests
-owned deletion; omission preserves remote resources. A failed read is unknown.
-Verification checks the configured public HTTP path and status. Use the app's
-check for authenticated WebSocket behavior.
+`prepare [gateway]` writes `ya-infra-gateway-<name>` to the rootless Podman secret
+store through stdin. It leaves an unchanged secret intact and refuses an unowned
+same-name secret. Runtime secrets are decrypted data in Podman's store; they are
+not plaintext files in the checkout. After token rotation, run prepare and
+`podman compose -f deployments/gateway/compose.yaml up -d --force-recreate`;
+existing containers keep their old secret until recreated. Removing a declaration
+does not delete its runtime secret. Remove unused secrets explicitly with Podman.
+
+The Compose file supplies the `public` connector. Add native services and external
+secret entries for additional Gateways, with separate loopback metrics ports.
+Keep the image digest pinned. An image upgrade changes Compose, then recreates
+and verifies the connector; it does not change Cloudflare routes.
+
+Routes use a Gateway name and an explicit HTTP(S) origin. Multiple hostnames can
+use one origin; each Tunnel has one Gateway owner. `apply [hostname]` changes only
+owned remote resources. Omission preserves them; `state: absent` requests deletion.
+`status` reports observed routes; Compose `ps` reports containers. `verify` checks
+public HTTP; use the app's own check for authenticated WebSocket behavior.
+
+## Boot and takeover
+
+[ya-infra-gateway.service](ya-infra-gateway.service) is a **user** unit. Its default
+checkout is `~/ya-infra`; set `WorkingDirectory` and `ExecStartPre` to your persistent
+deployment directory and built CLI if different. Run `just gateway prepare` there
+before enabling the unit. Keep that checkout and its `.bin` executable available.
+The unit prepares secrets, then recreates connectors so they use the current token.
+Stop removes connector containers but keeps external secrets and Cloudflare routes.
+Enable user lingering if boot must work before login.
+
+```sh
+install -Dm 0644 deployments/gateway/ya-infra-gateway.service \
+  ~/.config/systemd/user/ya-infra-gateway.service
+systemctl --user daemon-reload
+systemctl --user enable --now ya-infra-gateway.service
+```
+
+For the former connector, first preserve its inspect output, restart policy, token,
+Gateway state, and encrypted input in a private backup. Start the Compose connector
+alongside it: the supplied name and metrics port 20243 differ from the old defaults.
+Host networking retains loopback origins. Test **every** current Tunnel origin,
+including unmanaged routes, from that network context. Check new container health,
+public routes, and an unchanged Gateway diff before disabling the old restart owner
+and stopping the old connector. Keep it for recovery. To roll back, stop the new
+user unit, restore the old restart policy, and start the old connector. Inspect diff
+again if any origin changed after takeover.
+
+For a previous two-file Gateway input, copy the decrypted `gateways` and `routes`
+into the new encrypted entry and add each connector token. Keep all identities,
+hostnames, origins, and the ownership state unchanged. Perform this with private
+files or in memory; never print credentials. The old `source` and `kube_context`
+entry belongs to the remaining app tooling and is not a Gateway input.
 
 ## Ownership and recovery
 
-The Go port retains the legacy location and record format:
-`$XDG_STATE_HOME/infra/gateway/<name>/` (default `~/.local/state`). It contains
-`manage.lock`, `routes.json`, and `before-last-apply.json`. Preserve this private
-state when moving a deployment. It proves ownership; matching remote values do not.
+State remains at `$XDG_STATE_HOME/infra/gateway/<name>/` (default `~/.local/state`).
+Keep `manage.lock`, `routes.json`, and `before-last-apply.json` when moving a
+deployment. State proves ownership; matching remote values do not. Preparation
+and remote apply share the Gateway lock.
 
 Apply rechecks remote state before each write, preserves unrelated rules and
 unknown options, and reads the result back. Tunnel and DNS writes are separate.
 The pending record and DNS comment identify an interrupted creation. Retry the
-same declaration after resolving the reported error. Concurrent remote edits
-require inspection; do not erase ownership to bypass a conflict.
+same declaration after resolving the error. Inspect concurrent remote edits;
+keep ownership records when resolving conflicts.
 
-Back up state and desired encrypted input before a route change. The snapshot
-contains the last pre-write Tunnel configuration and DNS observation. For rollback,
-restore the former origin in the encrypted declaration, inspect diff, then apply.
-Do not restore an entire old Tunnel configuration over another operator's changes.
-Use the provider console to reconcile an ambiguous external edit and save the
-verified ownership record before retrying.
-
-`check-credentials` tests reads only. It reports endpoint-specific permissions and
-IP-filter failures without provider message text or tokens. Writes are tested by
-an authorized apply. [Migration](../docs/migration.md) owns connector network
-compatibility and live cutover.
+Back up state and encrypted input before route changes. For rollback, restore the
+former origin in the declaration, inspect diff, then apply. Restore only managed
+routes, not an entire old Tunnel configuration over another operator's changes.
+`check-credentials` tests reads; an authorized apply tests writes. A failed read is
+unknown, never evidence that a resource is absent.

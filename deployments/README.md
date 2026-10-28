@@ -1,7 +1,9 @@
 # Deployments
 
-Use native Kubernetes resources for applications. Use the Go CLI for host bootstrap,
-kubectl forwarding, and Cloudflare routes. [AGENTS.md](AGENTS.md) routes task-specific reading.
+Start with [Gateway](gateway/README.md) for rootless Compose and Cloudflare routes.
+The application tooling below still uses native Kubernetes resources. Keep its
+legacy entry configuration in a separate invocation directory from Gateway.
+[AGENTS.md](AGENTS.md) routes task-specific reading.
 
 ## Start
 
@@ -27,8 +29,8 @@ sops config.sops.yaml
 ```
 
 Only `./config.sops.yaml` is read. `source` is relative to the invocation directory.
-Use the same encryption command with the owning example and output name for app,
-Gateway, and local-server inputs. Edit sensitive values through SOPS.
+Use the same encryption command with the owning example and output name for app
+and local-server inputs. Edit sensitive values through SOPS.
 
 ```sh
 just bootstrap --help
@@ -39,7 +41,7 @@ just gateway --help
 
 An existing cluster needs only client tools and a named kubeconfig context. Select
 its storage class in the app manifests. The local cluster Kustomization includes
-local storage and the connector; it is not a prerequisite for other clusters.
+local storage; it is not a prerequisite for other clusters.
 Local bootstrap checks services, ports, CIDRs, and a 2 GiB free-space floor. Plan
 additional capacity for application data. Review the distribution's
 [host requirements](https://docs.k3s.io/installation/requirements) before installation.

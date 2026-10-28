@@ -33,11 +33,12 @@ Retain protects a released PV; backups protect against lost or corrupt data.
 
 ## Prepare the target
 
-1. Encrypt the entry, native server, Gateway, connector, and app inputs from their
-   examples. Keep old private inputs for recovery. Check the selected context.
+1. Encrypt the entry, native server, and app inputs from their examples. Gateway
+   has a separate [Compose procedure](../gateway/README.md). Keep old inputs for
+   recovery. Check the selected context.
 2. Run client bootstrap, then optional local bootstrap with sudo. Review ports,
    firewall, Pod/Service CIDRs, node resources, and storage placement first.
-3. Prepare cluster namespaces and retained storage. Keep connector replicas zero.
+3. Prepare cluster namespaces and retained storage.
    Existing clusters use their own storage class and scheduling constraints.
 4. Run the [public example and disposable retention check](../checks/README.md).
    Confirm the effective PV policy and rebind, not only the StorageClass setting.
@@ -64,15 +65,9 @@ its database file; also run SQLite `PRAGMA integrity_check` before activation.
 
 ### Connector first
 
-The migration connector uses host networking and a distinct metrics port. Before
-starting it, test **every** current Tunnel origin from that network context and
-resolve the cluster Service names. This includes routes this repository does not own.
-
-Start the replacement with the same Tunnel identity and unchanged ingress. Confirm
-edge readiness and each public route, then stop and disable the old startup owner.
-Only then change origins to Service DNS. Two connectors sharing a Tunnel must reach
-the same origins. If this fails, leave the old connector active and test a separate
-Tunnel. Keep host networking while any unrelated origin requires host loopback.
+Use the [Gateway Compose takeover procedure](../gateway/README.md#boot-and-takeover).
+Keep its origins unchanged until each application passes its own restore and
+readiness checks. The connector now runs in rootless Podman, outside Kubernetes.
 
 ### Paseo
 

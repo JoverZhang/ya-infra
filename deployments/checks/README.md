@@ -9,6 +9,14 @@ go -C deployments vet ./...
 go -C deployments test -race ./...
 ```
 
+Gateway secret checks also need SOPS, age-keygen, just, and rootless Podman. They
+use temporary encrypted inputs and a uniquely named native secret, then remove it.
+They do not start a connector or contact Cloudflare.
+
+```sh
+go -C deployments test -tags=integration -run TestGatewayConfigAndSecrets -v .
+```
+
 Real rendering requires the pinned SOPS, age-keygen, Kustomize, and KSOPS binaries
 on PATH. It creates a temporary age key and removes plaintext on exit.
 
