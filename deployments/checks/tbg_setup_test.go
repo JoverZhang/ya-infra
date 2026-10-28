@@ -22,20 +22,9 @@ func TestTBGSetup(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", binary, "../apps/tbg").CombinedOutput(); err != nil {
 		t.Fatalf("build setup: %v %s", err, out)
 	}
-	key := filepath.Join(dir, "age.key")
-	if out, err := exec.Command("age-keygen", "-o", key).CombinedOutput(); err != nil {
-		t.Fatalf("fixture key: %v %s", err, out)
-	}
-	recipient, err := exec.Command("age-keygen", "-y", key).Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy := filepath.Join(dir, ".sops.yaml")
-	if err := os.WriteFile(policy, []byte("creation_rules:\n  - age: "+strings.TrimSpace(string(recipient))+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	key, policy := sopsFixture(t, dir)
 	plain := "listen: 127.0.0.1:18474\ndata_dir: /var/lib/tbg\ntelegram:\n  bot_token: synthetic-fixture-token\nadmins: []\n"
-	cmd := exec.Command("sops", "--config", policy, "encrypt", "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
+	cmd := exec.Command("sops", "--config", policy, "encrypt", "--filename-override", "config.sops.yaml", "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	cmd.Stdin = strings.NewReader(plain)
 	encrypted, err := cmd.Output()
 	if err != nil {

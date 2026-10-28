@@ -6,3 +6,4 @@ infra.toml
 /.sops.yaml
 **/config.sops.yaml
 **/config.sops.env
+/deployments/apps/*/compose.override.yaml

@@ -53,7 +53,8 @@ func run(args []string) error {
 			DataDir string `yaml:"data_dir"`
 		}
 		if err := yaml.Unmarshal(data, &server); err != nil {
-			return errors.New("invalid native TBG configuration")
+			// Decoder errors can contain plaintext values from this secret file.
+			return errors.New("decode config.sops.yaml: invalid native TBG configuration; details withheld")
 		}
 		hostname, port, err := net.SplitHostPort(server.Listen)
 		if err != nil {

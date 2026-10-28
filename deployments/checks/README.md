@@ -11,7 +11,7 @@ go -C deployments test -tags=integration ./checks -v
 ```
 
 Integration needs SOPS, age-keygen, just, podman-compose, rootless Podman, and the
-pinned Node image used by `compose_test.go`. TBG setup also needs its host client.
+pinned Node image in [the Compose fixture](testdata/compose.yaml). TBG setup also needs its host client.
 Checks use temporary keys, synthetic credentials, unique external volumes and
 secrets. They verify forwarding, secret preparation, idempotency, missing-input
 failures, read-only mounts, and retained data after native `down -v`. Each emits a

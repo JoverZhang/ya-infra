@@ -2,8 +2,9 @@
 
 ## Before switching
 
-Record the old image digest, container name, startup owner, mounts, logical UID/GID,
-ports, and encrypted input. Keep private inspect output and credentials encrypted.
+Record the old image digest, entrypoint and command, container name, startup owner,
+mounts, logical UID/GID, ports, and encrypted input. Keep private inspect output and
+credentials encrypted.
 Save the old startup declaration so rollback does not depend on a running container.
 
 Use an encrypted backup outside the live data directory, with an off-host copy of

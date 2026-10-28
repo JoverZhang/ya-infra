@@ -12,7 +12,8 @@ there. Keep the private key outside Git.
 
 ```sh
 cd deployments/apps/paseo
-sops --config ../../../.sops.yaml encrypt --output config.sops.env config.example.env
+sops --config ../../../.sops.yaml encrypt --filename-override config.sops.env \
+  --output config.sops.env config.example.env
 sops config.sops.env
 cd ../../..
 just compose paseo up -d

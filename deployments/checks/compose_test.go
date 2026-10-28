@@ -35,23 +35,12 @@ func TestComposeLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	key := filepath.Join(dir, "age.key")
-	if out, err := exec.Command("age-keygen", "-o", key).CombinedOutput(); err != nil {
-		t.Fatalf("fixture key: %v %s", err, out)
-	}
-	recipient, err := exec.Command("age-keygen", "-y", key).Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy := filepath.Join(dir, ".sops.yaml")
-	if err := os.WriteFile(policy, []byte("creation_rules:\n  - age: "+strings.TrimSpace(string(recipient))+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	key, policy := sopsFixture(t, dir)
 	project := fmt.Sprintf("ya-infra-check-%x", time.Now().UnixNano())
 	volume := project + "-data"
 	token := "fixture-$HOME-$(touch should-not-exist)"
 	plain := "COMPOSE_PROJECT_NAME=" + project + "\nDATA_VOLUME=" + volume + "\nTOKEN=" + token + "\n"
-	cmd := exec.Command("sops", "--config", policy, "encrypt", "--input-type", "dotenv", "--output-type", "dotenv", "/dev/stdin")
+	cmd := exec.Command("sops", "--config", policy, "encrypt", "--filename-override", "config.sops.env", "--input-type", "dotenv", "--output-type", "dotenv", "/dev/stdin")
 	cmd.Stdin = strings.NewReader(plain)
 	encrypted, err := cmd.Output()
 	if err != nil {
@@ -60,26 +49,11 @@ func TestComposeLifecycle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(app, "config.sops.env"), encrypted, 0600); err != nil {
 		t.Fatal(err)
 	}
-	manifest := `services:
-  check:
-    image: docker.io/library/node@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
-    network_mode: none
-    environment:
-      TOKEN: ${TOKEN:?decrypt the fixture first}
-    command: [node, -e, "const fs=require('fs'); if(!fs.existsSync('/data/retained')) fs.writeFileSync('/data/retained', 'keep'); setInterval(() => {}, 1000)"]
-    volumes:
-      - data:/data
-      - type: bind
-        source: ./asset
-        target: /asset
-        read_only: true
-        bind: {create_host_path: false}
-volumes:
-  data:
-    external: true
-    name: ${DATA_VOLUME:?set the fixture volume}
-`
-	if err := os.WriteFile(filepath.Join(app, "compose.yaml"), []byte(manifest), 0600); err != nil {
+	manifest, err := os.ReadFile("testdata/compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "compose.yaml"), manifest, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(app, "asset"), []byte("read-only"), 0600); err != nil {
