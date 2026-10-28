@@ -1,0 +1,85 @@
+name: ya-infra-cpe
+
+x-runtime: &runtime
+  image: ${CPE_IMAGE:-cpe:local}
+  pull_policy: never
+  init: true
+  restart: unless-stopped
+  network_mode: host
+  working_dir: /app
+  depends_on:
+    mysql: {condition: service_healthy}
+    mongo: {condition: service_healthy}
+  volumes:
+    - type: bind
+      source: ${CPE_PROJECT_DIR:?select the configured CPE checkout}/config.toml
+      target: /app/config.toml
+      read_only: true
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${CPE_PROJECT_DIR}/data
+      target: /app/data
+      read_only: true
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${CPE_PROJECT_DIR}/data
+      target: ${CPE_PROJECT_DIR}/data
+      read_only: true
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${CPE_PROJECT_DIR}/worker_scripts/scripts
+      target: /app/worker_scripts/scripts
+      read_only: true
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${CPE_PROJECT_DIR}/worker_scripts/algorithms
+      target: /app/worker_scripts/algorithms
+      read_only: true
+      bind: {create_host_path: false}
+
+services:
+  mysql:
+    extends:
+      file: ${CPE_PROJECT_DIR}/compose.yaml
+      service: mysql
+    pull_policy: never
+    restart: unless-stopped
+    volumes: ["mysql_data:/var/lib/mysql"]
+  mongo:
+    extends:
+      file: ${CPE_PROJECT_DIR}/compose.yaml
+      service: mongo
+    pull_policy: never
+    restart: unless-stopped
+    volumes: ["mongo_data:/data/db", "mongo_config:/data/configdb"]
+  daemon:
+    <<: *runtime
+    command: [computed-parameter-engine]
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+  web:
+    <<: *runtime
+    command: [node, web/dist/server/index.js]
+    environment:
+      NODE_ENV: production
+      CPE_PROJECT_ROOT: /app
+      CPE_CLIENT_BIN: /usr/local/bin/cpe-client
+      CPE_WEB_HOST: 127.0.0.1
+      CPE_WEB_PORT: ${CPE_WEB_PORT:-27310}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:'+process.env.CPE_WEB_PORT+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  mysql_data:
+    external: true
+    name: ${CPE_MYSQL_VOLUME:?select the existing MySQL volume}
+  mongo_data:
+    external: true
+    name: ${CPE_MONGO_VOLUME:?select the existing Mongo data volume}
+  mongo_config:
+    external: true
+    name: ${CPE_MONGO_CONFIG_VOLUME:?select the existing Mongo config volume}
