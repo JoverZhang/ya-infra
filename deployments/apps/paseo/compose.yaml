@@ -5,7 +5,7 @@ services:
     image: ${PASEO_WEB_IMAGE:?build and select the Web image}
     pull_policy: never
     user: "101:101"
-    restart: always
+    restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -22,7 +22,7 @@ services:
     image: ${PASEO_IMAGE:?build and select the daemon image}
     pull_policy: never
     user: "1000:1000"
-    restart: always
+    restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
