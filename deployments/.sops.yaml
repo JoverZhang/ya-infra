@@ -1,4 +1,4 @@
 # Set your public age recipient before encryption. Keep its private key outside Git.
 creation_rules:
-  - path_regex: '\.sops\.(yaml|env)$'
+  - path_regex: '\.sops\.(yaml|env|json)$'
     age: REPLACE_WITH_YOUR_PUBLIC_AGE_RECIPIENT

@@ -10,48 +10,51 @@ x-runtime: &runtime
   depends_on:
     mysql: {condition: service_healthy}
     mongo: {condition: service_healthy}
+  secrets:
+    - source: ya-infra-cpe-config
+      target: /app/config.toml
+      mode: "0400"
   volumes:
     - type: bind
-      source: ${CPE_PROJECT_DIR:?select the configured CPE checkout}/config.toml
-      target: /app/config.toml
-      read_only: true
-      bind: {create_host_path: false}
-    - type: bind
-      source: ${CPE_PROJECT_DIR}/data
+      source: ${CPE_DATA_DIR:?select the HDF5 data directory}
       target: /app/data
-      read_only: true
-      bind: {create_host_path: false}
-    - type: bind
-      source: ${CPE_PROJECT_DIR}/data
-      target: ${CPE_PROJECT_DIR}/data
-      read_only: true
-      bind: {create_host_path: false}
-    - type: bind
-      source: ${CPE_PROJECT_DIR}/worker_scripts/scripts
-      target: /app/worker_scripts/scripts
-      read_only: true
-      bind: {create_host_path: false}
-    - type: bind
-      source: ${CPE_PROJECT_DIR}/worker_scripts/algorithms
-      target: /app/worker_scripts/algorithms
       read_only: true
       bind: {create_host_path: false}
 
 services:
   mysql:
-    extends:
-      file: ${CPE_PROJECT_DIR}/compose.yaml
-      service: mysql
+    image: ghcr.io/computed-parameter/computed-parameter-engine-mysql@sha256:d14140a10302c27a9538484a32baa913a32b908a3a349fb2046270c087326b66
+    platform: linux/amd64
     pull_policy: never
     restart: unless-stopped
+    ports: ["127.0.0.1:${CPE_MYSQL_PORT:-27032}:3306"]
     volumes: ["mysql_data:/var/lib/mysql"]
+    healthcheck:
+      test: [CMD, mysqladmin, ping, -h, 127.0.0.1, -uroot, -proot]
+      interval: 5s
+      timeout: 5s
+      retries: 20
   mongo:
-    extends:
-      file: ${CPE_PROJECT_DIR}/compose.yaml
-      service: mongo
+    image: ghcr.io/computed-parameter/computed-parameter-engine-mongo@sha256:1368eb7b0c879446c12fd10d04ff8d57e074f9c8a1a1e2108b3720f24298e38c
+    platform: linux/amd64
     pull_policy: never
     restart: unless-stopped
-    volumes: ["mongo_config:/data/configdb"]
+    command: [--port, "27018", --wiredTigerCacheSizeGB, "4", --replSet, cpe-local]
+    ports: ["127.0.0.1:${CPE_MONGO_PORT:-27270}:27018"]
+    volumes: ["mongo_data:/data/db", "mongo_config:/data/configdb"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test ! -s /tmp/docker-entrypoint-temp-mongod.pid &&
+          mongosh --quiet --port 27018 -u root -p root --authenticationDatabase admin
+          --eval 'try { const status = rs.status(); print(status.ok === 1 && status.myState === 1 ? 1 : 0); }
+          catch (error) { if (error.codeName === "NotYetInitialized") {
+          rs.initiate({_id: "cpe-local", members: [{_id: 0, host: "localhost:27018"}]}); } print(0); }'
+          | tail -n 1 | grep 1
+      interval: 5s
+      timeout: 5s
+      retries: 20
   daemon:
     <<: *runtime
     # Native boot recovery starts containers without Compose health ordering.
@@ -89,3 +92,7 @@ volumes:
   mongo_config:
     external: true
     name: ${CPE_MONGO_CONFIG_VOLUME:?select the existing Mongo config volume}
+
+secrets:
+  ya-infra-cpe-config:
+    external: true
