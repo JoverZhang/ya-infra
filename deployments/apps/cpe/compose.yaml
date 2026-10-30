@@ -16,6 +16,11 @@ x-runtime: &runtime
       mode: "0400"
   volumes:
     - type: bind
+      source: ${CPE_SCRIPTS_DIR:?select the worker_scripts directory}
+      target: /app/worker_scripts
+      read_only: true
+      bind: {create_host_path: false}
+    - type: bind
       source: ${CPE_DATA_DIR:?select the HDF5 data directory}
       target: /app/data
       read_only: true

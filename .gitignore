@@ -8,3 +8,5 @@ infra.toml
 **/config.sops.env
 **/config.sops.json
 /deployments/apps/*/compose.override.yaml
+
+/.sources/

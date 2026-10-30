@@ -1,8 +1,8 @@
 # CPE
 
 Compose runs the local delivery image, defaulting to `cpe:local`. The image owns
-its binaries, Web assets, and Script/Algorithm catalogs. Startup never builds or
-pulls an image and needs no source checkout.
+its binaries and Web assets. Mount the complete external `worker_scripts/`
+directory readonly through `CPE_SCRIPTS_DIR`. Startup never builds or pulls an image.
 
 Set `config.sops.env` from [the example](config.example.env). Store HDF5 under
 `$XDG_DATA_HOME/ya-infra/cpe/data` (default `~/.local/share/ya-infra/cpe/data`), then
@@ -36,9 +36,34 @@ fields are used, also mount their configured key file readonly through a local
 
 Daemon and Web mount the configuration secret and HDF5 readonly. For historical
 Compare records with absolute file paths, add a readonly HDF5 bind at each original
-container path in `compose.override.yaml`. Do not mount an old source catalog over
-the image. [Migration](../../docs/migration.md) covers backups and single-writer
+container path in `compose.override.yaml`. The scripts mount also replaces image
+references; keep references compatible with the image-built Procedure Graph assets. [Migration](../../docs/migration.md) covers backups and single-writer
 ownership.
+
+## Test scripts
+
+This test environment uses a detached CPE worktree under `.sources/cpe/` at the
+ya-infra root. Create it from the retained development repository:
+
+```sh
+git -C /path/to/cpe worktree add --detach /path/to/ya-infra/.sources/cpe origin/master
+```
+
+Set `CPE_SCRIPTS_DIR` to that worktree's `worker_scripts` directory. The worktree
+shares Git metadata with the development repository; keep that repository available.
+To update, fetch the repository, confirm the worktree is clean, and select a commit:
+
+```sh
+git -C .sources/cpe fetch origin
+git -C .sources/cpe status --short
+git -C .sources/cpe switch --detach origin/master
+```
+
+Stop daemon/Web before changing mounted scripts, then start them after updating.
+Git does not publish a directory tree atomically. Check the selected revision's
+image compatibility; a source update does not update application binaries or import
+Algorithm records into the database. Other environments can select their own
+external scripts directory.
 
 ## Operate and update
 
