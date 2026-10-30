@@ -56,7 +56,9 @@ To update, fetch the repository, confirm the worktree is clean, and select a com
 ```sh
 git -C .sources/cpe fetch origin
 git -C .sources/cpe status --short
+just compose cpe stop daemon web
 git -C .sources/cpe switch --detach origin/master
+just compose cpe up -d --no-deps daemon web
 ```
 
 Stop daemon/Web before changing mounted scripts, then start them after updating.
@@ -73,8 +75,8 @@ just compose cpe up -d
 just compose cpe ps
 just compose cpe logs --tail 50
 
-# Build in the retained CPE development checkout.
-just image build cpe:local
+# Build the same revision selected for the scripts mount.
+(cd .sources/cpe && just image build cpe:local)
 
 # Run from the ya-infra root; leave database containers running.
 just compose cpe up -d --no-deps --force-recreate daemon web
