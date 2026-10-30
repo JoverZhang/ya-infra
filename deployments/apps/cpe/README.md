@@ -14,7 +14,9 @@ with these ports.
 ## Prepare configuration
 
 Keep CPE's native TOML format. SOPS stores this unsupported document format as an
-encrypted binary payload in `config.sops.json`. From this directory:
+encrypted binary payload in `config.sops.json`. In the checkout root `.sops.yaml`,
+set `path_regex` to `'\.sops\.(yaml|env|json)$'`; keep your existing age recipient.
+Then run from this directory:
 
 ```sh
 # Run once with an existing native config.toml; keep the source outside Git.
