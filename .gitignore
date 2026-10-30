@@ -6,4 +6,7 @@ infra.toml
 /.sops.yaml
 **/config.sops.yaml
 **/config.sops.env
+**/config.sops.json
 /deployments/apps/*/compose.override.yaml
+
+/.sources/

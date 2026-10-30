@@ -1,38 +1,93 @@
 # CPE
 
-Compose runs the existing delivery image, defaulting to `cpe:local`. Select another
-local tag or digest with `CPE_IMAGE`; startup never builds or pulls an image.
+Compose runs the local delivery image, defaulting to `cpe:local`. The image owns
+its binaries and Web assets. Mount the complete external `worker_scripts/`
+directory readonly through `CPE_SCRIPTS_DIR`. Startup never builds or pulls an image.
 
-Set `config.sops.env` from [the example](config.example.env). `CPE_PROJECT_DIR`
-selects a configured checkout with `compose.yaml`, `config.toml`, `data`, and
-`worker_scripts/{scripts,algorithms}`. MySQL and Mongo inherit that checkout's
-Compose declarations. Select all three existing database volumes explicitly;
-the original MySQL and Mongo config volumes can have anonymous names.
+Set `config.sops.env` from [the example](config.example.env). Store HDF5 under
+`$XDG_DATA_HOME/ya-infra/cpe/data` (default `~/.local/share/ya-infra/cpe/data`), then
+set its absolute path as `CPE_DATA_DIR`. Select all three existing external database
+volumes. The prepared CPE database images use local `root`/`root` credentials;
+their published ports are loopback only. Keep native CPE database URLs in sync
+with these ports.
+
+## Prepare configuration
+
+Keep CPE's native TOML format. SOPS stores this unsupported document format as an
+encrypted binary payload in `config.sops.json`. In the checkout root `.sops.yaml`,
+set `path_regex` to `'\.sops\.(yaml|env|json)$'`; keep your existing age recipient.
+Then run from this directory:
+
+```sh
+# Run once with an existing native config.toml; keep the source outside Git.
+sops --config ../../../.sops.yaml encrypt --input-type binary --output-type json \
+  --filename-override config.sops.json --output config.sops.json /path/to/config.toml
+
+# Run after each config change, before creating or recreating application containers.
+sops exec-file --output-type binary config.sops.json \
+  'podman secret create --replace ya-infra-cpe-config {}'
+```
+
+SOPS passes decrypted TOML through a temporary FIFO. A decryption failure prevents
+the secret command from running. Boot recovery reuses the stored Podman secret;
+configuration changes require container recreation. If native `ENC(age:...)`
+fields are used, also mount their configured key file readonly through a local
+`compose.override.yaml`.
+
+Daemon and Web mount the configuration secret and HDF5 readonly. For historical
+Compare records with absolute file paths, add a readonly HDF5 bind at each original
+container path in `compose.override.yaml`. The scripts mount also replaces image
+references; keep references compatible with the image-built Procedure Graph assets. [Migration](../../docs/migration.md) covers backups and single-writer
+ownership.
+
+## Test scripts
+
+This test environment uses a detached CPE worktree under `.sources/cpe/` at the
+ya-infra root. Create it from the retained development repository:
+
+```sh
+git -C /path/to/cpe worktree add --detach /path/to/ya-infra/.sources/cpe origin/master
+```
+
+Set `CPE_SCRIPTS_DIR` to that worktree's `worker_scripts` directory. The worktree
+shares Git metadata with the development repository; keep that repository available.
+To update, fetch the repository, confirm the worktree is clean, and select a commit:
+
+```sh
+git -C .sources/cpe fetch origin
+git -C .sources/cpe status --short
+just compose cpe stop daemon web
+git -C .sources/cpe switch --detach origin/master
+just compose cpe up -d --no-deps daemon web
+```
+
+Stop daemon/Web before changing mounted scripts, then start them after updating.
+Git does not publish a directory tree atomically. Check the selected revision's
+image compatibility; a source update does not update application binaries or import
+Algorithm records into the database. Other environments can select their own
+external scripts directory.
+
+## Operate and update
 
 ```sh
 # Run from the ya-infra root.
 just compose cpe up -d
 just compose cpe ps
 just compose cpe logs --tail 50
-just compose cpe stop
+
+# Build the same revision selected for the scripts mount.
+(cd .sources/cpe && just image build cpe:local)
+
+# Run from the ya-infra root; leave database containers running.
+just compose cpe up -d --no-deps --force-recreate daemon web
+just compose cpe exec daemon cat /app/build.json
+just compose cpe exec daemon cpe-client doctor
 ```
 
-Daemon and Web share readonly native configuration and catalog mounts. The data
-directory is also mounted at its original absolute path for historical Compare
-records. Image-owned Web and reference assets remain visible. This layout expects
-the checkout's default `data` and `worker_scripts` paths; adjust mounts if its
-native configuration uses other paths. If native CPE `ENC(age:...)` fields are in
-use, add the configured key file as a readonly mount for both services.
+`restart` keeps the existing image. Recreate daemon and Web to use the new tag;
+`build.json` records the actual source commit. Database/schema or Algorithm
+identity changes still need the upstream release's migration steps.
 
-`config.sops.env` encrypts deployment variables; it does not encrypt the existing
-native `config.toml`. Keep that file under CPE's own configuration management.
-Do not run the checkout's `just up`, `down`, or `reset` against these same database
-volumes after takeover. [Migration](../../docs/migration.md) covers backup and
-single-writer ownership.
-
-Host networking preserves the native database URLs. Set `CPE_WEB_PORT` to the
-checkout's Web port and keep its existing Tunnel origin. Confirm external access
-authentication at the proxy. Database health gates initial application startup;
-`unless-stopped` handles runtime restart and the configured runtime boot recovery.
-Daemon also waits for `cpe-client doctor` before execution because native boot
-recovery does not apply Compose dependency health ordering.
+Keep the existing Tunnel origin at the configured Web loopback port and confirm
+proxy authentication. Database health gates Compose startup; daemon also waits
+for `cpe-client doctor` because native boot recovery skips Compose health ordering.
