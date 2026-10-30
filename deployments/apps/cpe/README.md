@@ -18,7 +18,7 @@ encrypted binary payload in `config.sops.json`. From this directory:
 
 ```sh
 # Run once with an existing native config.toml; keep the source outside Git.
-sops encrypt --input-type binary --output-type json \
+sops --config ../../../.sops.yaml encrypt --input-type binary --output-type json \
   --filename-override config.sops.json --output config.sops.json /path/to/config.toml
 
 # Run after each config change, before creating or recreating application containers.
