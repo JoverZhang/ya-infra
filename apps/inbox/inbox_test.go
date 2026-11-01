@@ -229,3 +229,25 @@ func TestPartialSSOCoverage(t *testing.T) {
 		t.Fatal("partial SSO coverage accepted as complete")
 	}
 }
+
+func TestAssignmentNotification(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-OAuth-Scopes", "repo, notifications")
+		switch r.URL.Path {
+		case "/user":
+			w.Write([]byte(`{"login":"fixture"}`))
+		case "/search/issues":
+			w.Write([]byte(`{"total_count":0,"items":[]}`))
+		case "/notifications":
+			w.Write([]byte(`[{"reason":"assign","updated_at":"2025-01-01T00:00:00Z","repository":{"full_name":"example/project"},"subject":{"title":"Assigned change","type":"PullRequest","url":"https://api.github.com/repos/example/project/pulls/8"}}]`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer api.Close()
+	client := githubClient{base: api.URL, token: "fixture", client: api.Client()}
+	items, err := client.tasks(context.Background())
+	if err != nil || len(items) != 1 {
+		t.Fatalf("assigned PR missing: %v %+v", err, items)
+	}
+}

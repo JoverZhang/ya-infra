@@ -12,8 +12,8 @@ The HTTP/SQLite tests exercise authentication, merged GitHub observations, local
 read/snooze persistence, upstream failure retention, site fault recovery and safe
 error reporting. Fixtures use no real accounts or repositories.
 
-GitHub collection combines open review requests, assigned issues, authored PRs
-with requested changes, and unread mentions/review requests/comments. One URL is
+GitHub collection combines open review requests, assigned issues/PRs, authored PRs
+with requested changes, and unread assignments/mentions/review requests/comments. One URL is
 one item. A completed snapshot resolves missing items. A failed or truncated
 snapshot retains the previous tasks and creates a source error. Notifications
 need a classic PAT with `repo` coverage. This version requires private-repository

@@ -129,7 +129,7 @@ func (g *githubClient) tasks(ctx context.Context) ([]item, error) {
 		}
 		return nil
 	}
-	for _, query := range []struct{ filter, reason string }{{"is:pr is:open review-requested:", "Review requested"}, {"is:issue is:open assignee:", "Assigned issue"}, {"is:pr is:open author:", "Changes requested"}} {
+	for _, query := range []struct{ filter, reason string }{{"is:pr is:open review-requested:", "Review requested"}, {"is:open assignee:", "Assigned to you"}, {"is:pr is:open author:", "Changes requested"}} {
 		filter := query.filter + user.Login
 		if query.reason == "Changes requested" {
 			filter += " review:changes_requested"
@@ -174,7 +174,7 @@ func (g *githubClient) tasks(ctx context.Context) ([]item, error) {
 			return nil, err
 		}
 		for _, n := range data {
-			if n.Reason != "mention" && n.Reason != "team_mention" && n.Reason != "review_requested" && n.Reason != "comment" {
+			if n.Reason != "assign" && n.Reason != "mention" && n.Reason != "team_mention" && n.Reason != "review_requested" && n.Reason != "comment" {
 				continue
 			}
 			kind := ""
