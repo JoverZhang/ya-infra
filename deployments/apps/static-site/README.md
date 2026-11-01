@@ -56,6 +56,7 @@ A build has a 15-minute timeout; stale source worktrees remain for 30 minutes.
 Each successful build retains only its own release output. The page returns 503
 during builds, including rebuilds after sync restarts. Hook timeouts leave it
 unpublished; a later successful retry restores the page.
+A killed copy can leave unpublished staging files; the next attempt removes them.
 `/repo/sync-error` records fetch errors; `/repo/site/build-error` records build
 failures. Inspect sync logs privately for details. Its readiness endpoint reports
 checkout readiness, not build readiness. Inbox's existing fetch checks do not read
