@@ -30,7 +30,7 @@ func serve() error {
 		if err == nil {
 			break
 		}
-		fmt.Fprintln(os.Stderr, "waiting for a synced checkout")
+		fmt.Fprintf(os.Stderr, "waiting for synced checkout %s: %v\n", sourceLink, err)
 		time.Sleep(2 * time.Second)
 	}
 	// Native init/restart must end the entire container, including npm's children.
@@ -38,10 +38,14 @@ func serve() error {
 	go func() {
 		for range time.NewTicker(time.Second).C {
 			current, err := filepath.EvalSymlinks(sourceLink)
-			if err != nil || current != source {
-				fmt.Fprintln(os.Stderr, "checkout changed or disappeared; restarting development server")
-				os.Exit(1)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "resolve checkout %s: %v; restarting development server\n", sourceLink, err)
+			} else if current != source {
+				fmt.Fprintln(os.Stderr, "checkout changed; restarting development server")
+			} else {
+				continue
 			}
+			os.Exit(1)
 		}
 	}()
 	if err := os.RemoveAll(workspace); err != nil {
