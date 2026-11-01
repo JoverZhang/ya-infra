@@ -1,7 +1,12 @@
 name: ya-infra-static-site
 services:
   sync:
-    image: ${SYNC_IMAGE:?select a pinned git-sync image}
+    image: ${SITE_SYNC_IMAGE:-localhost/ya-infra-static-site:local}
+    pull_policy: never
+    build:
+      context: .
+      args:
+        SYNC_IMAGE: ${SYNC_IMAGE:?select a pinned git-sync image}
     restart: unless-stopped
     user: "0:0"
     command:
@@ -12,11 +17,16 @@ services:
       - --depth=1
       - --period=60s
       - --max-failures=-1
-      - --stale-worktree-timeout=5m
+      - --stale-worktree-timeout=30m
+      - --exechook-command=/usr/local/bin/build-site
+      - --exechook-timeout=15m
+      - --exechook-backoff=60s
       - --username=x-access-token
       - --password-file=/run/secrets/site-token
       - --error-file=sync-error
       - --http-bind=:2020
+    environment:
+      VITE_BASE_PATH: ${SITE_BASE_PATH:-/}
     ports: ["127.0.0.1:${SITE_SYNC_PORT:-18582}:2020"]
     secrets:
       - source: ya-infra-static-site-github
@@ -34,6 +44,8 @@ services:
       retries: 3
       start_period: 30s
     ports: ["127.0.0.1:${SITE_PORT:-18581}:8080"]
+    environment:
+      SITE_BASE_PATH: ${SITE_BASE_PATH:-/}
     volumes:
       - type: volume
         source: data
