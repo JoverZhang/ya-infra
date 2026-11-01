@@ -24,11 +24,15 @@ services:
         mode: "0400"
     volumes: ["data:/repo"]
   web:
-    image: ${WEB_IMAGE:-localhost/ya-infra-static-site:dev}
-    pull_policy: never
-    build: .
+    image: ${WEB_IMAGE:-docker.io/library/node@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446}
     init: true
     restart: unless-stopped
+    user: "0:0"
+    working_dir: ${SITE_WORKTREE:?select the live source worktree}
+    command:
+      - sh
+      - -ec
+      - npm install && exec npm run dev -- --host 0.0.0.0 --port 8080 --strictPort --base "$$VITE_BASE_PATH"
     environment:
       NODE_ENV: development
       VITE_BASE_PATH: ${SITE_BASE_PATH:-/}
@@ -43,10 +47,10 @@ services:
       start_period: 30s
     ports: ["127.0.0.1:${SITE_PORT:-18581}:8080"]
     volumes:
-      - type: volume
-        source: data
-        target: /repo
-        read_only: true
+      - type: bind
+        source: ${SITE_WORKTREE:?select the live source worktree}
+        target: ${SITE_WORKTREE:?select the live source worktree}
+        bind: {create_host_path: false}
   annotations:
     image: ${ANNOTATIONS_IMAGE:-localhost/ya-infra-annotations:local}
     pull_policy: never
