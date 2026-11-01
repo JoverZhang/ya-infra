@@ -1,12 +1,7 @@
 name: ya-infra-static-site
 services:
   sync:
-    image: ${SITE_SYNC_IMAGE:-localhost/ya-infra-static-site:local}
-    pull_policy: never
-    build:
-      context: .
-      args:
-        SYNC_IMAGE: ${SYNC_IMAGE:?select a pinned git-sync image}
+    image: ${SYNC_IMAGE:?select a pinned git-sync image}
     restart: unless-stopped
     user: "0:0"
     command:
@@ -17,16 +12,11 @@ services:
       - --depth=1
       - --period=60s
       - --max-failures=-1
-      - --stale-worktree-timeout=30m
-      - --exechook-command=/usr/local/bin/build-site
-      - --exechook-timeout=15m
-      - --exechook-backoff=60s
+      - --stale-worktree-timeout=0s
       - --username=x-access-token
       - --password-file=/run/secrets/site-token
       - --error-file=sync-error
       - --http-bind=:2020
-    environment:
-      VITE_BASE_PATH: ${SITE_BASE_PATH:-/}
     ports: ["127.0.0.1:${SITE_SYNC_PORT:-18582}:2020"]
     secrets:
       - source: ya-infra-static-site-github
@@ -34,28 +24,27 @@ services:
         mode: "0400"
     volumes: ["data:/repo"]
   web:
-    image: ${WEB_IMAGE:?select a pinned Caddy image}
+    image: ${WEB_IMAGE:-localhost/ya-infra-static-site:dev}
+    pull_policy: never
+    build: .
+    init: true
     restart: unless-stopped
-    command: [caddy, run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+    environment:
+      NODE_ENV: development
+      VITE_BASE_PATH: ${SITE_BASE_PATH:-/}
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${SITE_DEV_HOST:-localhost}
     healthcheck:
-      test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/]
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080'+process.env.VITE_BASE_PATH).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 30s
     ports: ["127.0.0.1:${SITE_PORT:-18581}:8080"]
-    environment:
-      SITE_BASE_PATH: ${SITE_BASE_PATH:-/}
     volumes:
       - type: volume
         source: data
         target: /repo
         read_only: true
-      - type: bind
-        source: ./Caddyfile
-        target: /etc/caddy/Caddyfile
-        read_only: true
-        bind: {create_host_path: false}
 volumes:
   data:
     external: true

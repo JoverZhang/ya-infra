@@ -2,96 +2,87 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"slices"
+	"time"
 )
 
-const siteDir = "/repo/site"
+const sourceLink = "/repo/current"
+const workspace = "/home/node/site"
 
 func main() {
-	if err := build(); err != nil {
-		// A failed update must not leave an older page available.
-		if removeErr := os.Remove(siteDir + "/current"); removeErr != nil && !os.IsNotExist(removeErr) {
-			fmt.Fprintln(os.Stderr, "unpublish failed build:", removeErr)
-		}
-		if removeErr := removeReleases(); removeErr != nil {
-			fmt.Fprintln(os.Stderr, "remove failed build output:", removeErr)
-		}
-		// Keep a separate marker: git-sync clears its own error file after a fetch.
-		if writeErr := os.WriteFile(siteDir+"/build-error", []byte("site build failed\n"), 0644); writeErr != nil {
-			fmt.Fprintln(os.Stderr, "record build failure:", writeErr)
-		}
+	if err := serve(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		// Avoid a tight restart loop when installation or startup fails.
+		time.Sleep(5 * time.Second)
 		os.Exit(1)
 	}
 }
 
-func build() error {
-	if err := os.MkdirAll(siteDir, 0755); err != nil {
-		return fmt.Errorf("create publication directory: %w", err)
-	}
-	// Withdraw before running npm so failures and hook timeouts cannot serve stale output.
-	if err := os.Remove(siteDir + "/current"); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("unpublish before build: %w", err)
-	}
-	if err := removeReleases(); err != nil {
-		return err
-	}
-	// Hooks run in a synced worktree. Never build into the directory Caddy serves.
-	if err := os.RemoveAll("dist"); err != nil {
-		return fmt.Errorf("remove stale build output: %w", err)
-	}
-	for _, args := range [][]string{{"install"}, {"run", "typecheck"}, {"run", "build"}} {
-		cmd := exec.Command("npm", args...)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("npm %s: %w", strings.Join(args, " "), err)
+func serve() error {
+	var source string
+	for {
+		var err error
+		source, err = filepath.EvalSymlinks(sourceLink)
+		if err == nil {
+			break
 		}
+		fmt.Fprintf(os.Stderr, "waiting for synced checkout %s: %v\n", sourceLink, err)
+		time.Sleep(2 * time.Second)
 	}
-	index, err := os.Stat("dist/index.html")
-	if err != nil {
-		return fmt.Errorf("check dist/index.html: %w", err)
+	// Native init/restart must end the entire container, including npm's children.
+	// This also interrupts installation if a newer checkout arrives.
+	go func() {
+		for range time.NewTicker(time.Second).C {
+			current, err := filepath.EvalSymlinks(sourceLink)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "resolve checkout %s: %v; restarting development server\n", sourceLink, err)
+			} else if current != source {
+				fmt.Fprintln(os.Stderr, "checkout changed; restarting development server")
+			} else {
+				continue
+			}
+			os.Exit(1)
+		}
+	}()
+	if err := os.RemoveAll(workspace); err != nil {
+		return fmt.Errorf("clear development workspace: %w", err)
 	}
-	if !index.Mode().IsRegular() || index.Size() == 0 {
-		return fmt.Errorf("dist/index.html must be a nonempty regular file")
+	if err := os.CopyFS(workspace, sourceTree{os.DirFS(source)}); err != nil {
+		return fmt.Errorf("copy development source: %w", err)
 	}
-	release, err := os.MkdirTemp(siteDir, ".release-")
-	if err != nil {
-		return fmt.Errorf("stage build output: %w", err)
+	install := exec.Command("npm", "install")
+	install.Dir, install.Stdout, install.Stderr = workspace, os.Stdout, os.Stderr
+	if err := install.Run(); err != nil {
+		return fmt.Errorf("install development dependencies: %w", err)
 	}
-	if err := os.Chmod(release, 0755); err != nil {
-		return err
+	base := os.Getenv("VITE_BASE_PATH")
+	if base == "" {
+		base = "/"
 	}
-	if err := os.CopyFS(release, os.DirFS("dist")); err != nil {
-		return fmt.Errorf("copy build output: %w", err)
+	dev := exec.Command("npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "8080", "--strictPort", "--base", base)
+	dev.Dir, dev.Stdout, dev.Stderr = workspace, os.Stdout, os.Stderr
+	if err := dev.Run(); err != nil {
+		return fmt.Errorf("run development server: %w", err)
 	}
-	link := release + "-link"
-	if err := os.Symlink(filepath.Base(release), link); err != nil {
-		return fmt.Errorf("stage publication link: %w", err)
-	}
-	if err := os.Remove(siteDir + "/build-error"); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("clear build failure: %w", err)
-	}
-	// Publication is the commit point: all fallible preparation is complete.
-	if err := os.Rename(link, siteDir+"/current"); err != nil {
-		return fmt.Errorf("publish build output: %w", err)
-	}
-	return nil
+	return fmt.Errorf("development server exited")
 }
 
-func removeReleases() error {
-	entries, err := os.ReadDir(siteDir)
+// Copy source without Git metadata, old static output or dependencies from another runtime.
+type sourceTree struct{ fs.FS }
+
+func (s sourceTree) ReadDir(name string) ([]fs.DirEntry, error) {
+	entries, err := fs.ReadDir(s.FS, name)
 	if err != nil {
-		return fmt.Errorf("list publication output: %w", err)
+		return nil, err
 	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".release-") {
-			if err := os.RemoveAll(filepath.Join(siteDir, entry.Name())); err != nil {
-				return fmt.Errorf("remove old publication: %w", err)
-			}
-		}
+	if name == "." {
+		entries = slices.DeleteFunc(entries, func(entry fs.DirEntry) bool {
+			return entry.Name() == ".git" || entry.Name() == "dist" || entry.Name() == "node_modules"
+		})
 	}
-	return nil
+	return entries, nil
 }
