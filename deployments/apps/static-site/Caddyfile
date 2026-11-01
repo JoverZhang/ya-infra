@@ -3,7 +3,8 @@
  auto_https off
 }
 :8080 {
- root * /repo/current
+ root * /repo/site/current
+ uri strip_prefix {$SITE_BASE_PATH:/}
  header Cache-Control "no-cache"
  @git path_regexp git (^|/)[.]git(/|$)
  respond @git 404
