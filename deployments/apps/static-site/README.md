@@ -7,8 +7,9 @@ shaped by `config.example.env`. Keep private names out of tracked files and PRs.
 
 ```sh
 podman volume create static-site-data
+podman volume create static-site-annotations
 # Prepare the repository secret below, then build the local web image.
-just compose static-site build web
+just compose static-site build web annotations
 just compose static-site up -d
 just compose static-site ps
 ```
@@ -34,9 +35,37 @@ for HMR. The existing loopback page port remains its HTTP origin; do not expose
 the sync readiness port. `NODE_ENV=development`, React dev metadata, source maps
 and Fast Refresh remain available; no production build runs.
 
-Vibe Annotations reads the page's React component information. No app plugin or
-MCP service is installed here. For a public URL, enable that site in the browser
-extension; see [its troubleshooting guide](https://www.vibe-annotations.com/docs/troubleshooting).
+## Shared design feedback
+
+The source app must mount Agentation in development, enable `useHashLocation`, and
+proxy `/__annotations` to `AGENTATION_PROXY_TARGET`. Compose supplies that internal
+target and `VITE_AGENTATION_ENDPOINT`; only the latter is browser configuration.
+`SITE_ORIGIN` is the exact public origin allowed by the backend's CORS policy.
+
+The annotations container runs HTTP only. SQLite lives in the external annotations
+volume; stopping a client or recreating the container preserves feedback. Its host
+port is loopback only. The public proxy needs Cloudflare Access on the preview
+hostname: CORS is not authentication. Access is configured by the operator, not by
+this app. Until enabled, the same-origin annotation API is publicly reachable.
+
+Codex is started and closed manually. Do not put it in Compose, systemd, scheduled
+tasks or a webhook. In the source worktree's local `.codex/config.toml`, configure
+the adapter (not another HTTP server):
+
+```toml
+[mcp_servers.agentation]
+command = "npx"
+args = ["-y", "agentation-mcp@1.3.2", "server", "--mcp-only", "--http-url", "http://127.0.0.1:4747"]
+startup_timeout_sec = 60
+tool_timeout_sec = 360
+```
+
+The operator launches `codex --no-daemon` in that worktree, checks `/mcp`, and asks
+it to process this project's feedback. Read unresolved backlog, including
+acknowledged unfinished work, before watching new events. Verify source changes,
+push the configured preview branch and verify deployment before resolving notes.
+Use `/quit` to exit; the HTTP backend keeps accepting feedback without a client.
+No Codex process is launched by deployment or its verification checks.
 
 ## Credentials and upgrades
 
