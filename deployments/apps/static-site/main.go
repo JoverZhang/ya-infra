@@ -12,6 +12,13 @@ const siteDir = "/repo/site"
 
 func main() {
 	if err := build(); err != nil {
+		// A failed update must not leave an older page available.
+		if removeErr := os.Remove(siteDir + "/current"); removeErr != nil && !os.IsNotExist(removeErr) {
+			fmt.Fprintln(os.Stderr, "unpublish failed build:", removeErr)
+		}
+		if removeErr := removeReleases(); removeErr != nil {
+			fmt.Fprintln(os.Stderr, "remove failed build output:", removeErr)
+		}
 		// Keep a separate marker: git-sync clears its own error file after a fetch.
 		if writeErr := os.WriteFile(siteDir+"/build-error", []byte("site build failed\n"), 0644); writeErr != nil {
 			fmt.Fprintln(os.Stderr, "record build failure:", writeErr)
@@ -24,6 +31,13 @@ func main() {
 func build() error {
 	if err := os.MkdirAll(siteDir, 0755); err != nil {
 		return fmt.Errorf("create publication directory: %w", err)
+	}
+	// Withdraw before running npm so failures and hook timeouts cannot serve stale output.
+	if err := os.Remove(siteDir + "/current"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("unpublish before build: %w", err)
+	}
+	if err := removeReleases(); err != nil {
+		return err
 	}
 	// Hooks run in a synced worktree. Never build into the directory Caddy serves.
 	if err := os.RemoveAll("dist"); err != nil {
@@ -57,28 +71,27 @@ func build() error {
 	if err := os.Symlink(filepath.Base(release), link); err != nil {
 		return fmt.Errorf("stage publication link: %w", err)
 	}
-	previous, err := os.Readlink(siteDir + "/current")
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read previous publication: %w", err)
-	}
 	if err := os.Remove(siteDir + "/build-error"); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear build failure: %w", err)
-	}
-	// Keep the previous release; remove abandoned staging directories on success.
-	entries, err := os.ReadDir(siteDir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".release-") && entry.Name() != filepath.Base(release) && entry.Name() != filepath.Base(link) && entry.Name() != previous {
-			if err := os.RemoveAll(filepath.Join(siteDir, entry.Name())); err != nil {
-				return fmt.Errorf("remove old publication: %w", err)
-			}
-		}
 	}
 	// Publication is the commit point: all fallible preparation is complete.
 	if err := os.Rename(link, siteDir+"/current"); err != nil {
 		return fmt.Errorf("publish build output: %w", err)
+	}
+	return nil
+}
+
+func removeReleases() error {
+	entries, err := os.ReadDir(siteDir)
+	if err != nil {
+		return fmt.Errorf("list publication output: %w", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".release-") {
+			if err := os.RemoveAll(filepath.Join(siteDir, entry.Name())); err != nil {
+				return fmt.Errorf("remove old publication: %w", err)
+			}
+		}
 	}
 	return nil
 }
