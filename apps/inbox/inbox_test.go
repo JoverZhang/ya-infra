@@ -216,3 +216,16 @@ func TestGitHubRetryDeadline(t *testing.T) {
 		t.Fatalf("issued %d requests before retry deadline", requests)
 	}
 }
+
+func TestPartialSSOCoverage(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-GitHub-SSO", "partial-results; organizations=123")
+		w.Write([]byte(`{"total_count":0,"items":[]}`))
+	}))
+	defer api.Close()
+	client := githubClient{base: api.URL, token: "fixture", client: api.Client()}
+	var value struct{}
+	if client.get(context.Background(), "/search/issues?q=example", &value) == nil {
+		t.Fatal("partial SSO coverage accepted as complete")
+	}
+}

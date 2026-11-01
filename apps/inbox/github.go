@@ -47,6 +47,10 @@ func (g *githubClient) get(ctx context.Context, path string, out any) error {
 		return errors.New("GitHub request failed")
 	}
 	defer res.Body.Close()
+	if header := res.Header.Get("X-GitHub-SSO"); strings.Contains(header, "partial-results") || strings.Contains(header, "required") {
+		return errors.New("GitHub SSO authorization is incomplete")
+	}
+
 	if res.StatusCode == 403 || res.StatusCode == 429 {
 		deadline := time.Time{}
 		if raw := res.Header.Get("Retry-After"); raw != "" {
