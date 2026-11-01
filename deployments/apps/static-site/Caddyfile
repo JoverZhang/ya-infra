@@ -8,6 +8,8 @@
  header Cache-Control "no-cache"
  @git path_regexp git (^|/)[.]git(/|$)
  respond @git 404
+ @unavailable not file /index.html
+ respond @unavailable 503
  file_server {
   hide .git .git/**
  }
