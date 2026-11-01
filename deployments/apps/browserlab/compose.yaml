@@ -4,7 +4,7 @@ services:
   browser:
     image: ${BROWSERLAB_IMAGE:?build and select the browser image}
     pull_policy: never
-    restart: always
+    restart: unless-stopped
     shm_size: 4g
     devices: ["/dev/dri:/dev/dri"]
     ports: ["127.0.0.1:${BROWSERLAB_DESKTOP_PORT:-43000}:3000", "127.0.0.1:${BROWSERLAB_CDP_PORT:-9222}:9223"]

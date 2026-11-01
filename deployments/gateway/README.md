@@ -8,7 +8,7 @@ directory.
 
 Install Podman, **podman-compose**, SOPS, Go, and just. `podman compose` delegates to
 an external provider; select podman-compose because this file uses native Podman
-external secrets. Use the same provider in your shell and the supplied user unit.
+external secrets. Use the same provider for all Compose operations.
 
 Use the [SOPS policy setup](../README.md#start-and-operate). Keep the private key outside Git.
 Encrypt [config.example.yaml](config.example.yaml) as `config.sops.yaml` in your
@@ -50,22 +50,9 @@ public HTTP; use the app's own check for authenticated WebSocket behavior.
 
 ## Boot and takeover
 
-[ya-infra-gateway.service](ya-infra-gateway.service) is a **user** unit. Its default
-checkout is `~/ya-infra`; set `WorkingDirectory` and `ExecStartPre` to your persistent
-deployment directory and built CLI if different. Run `just gateway prepare` there
-before enabling the unit. Keep that checkout and its `.bin` executable available.
-Configure [persistent SOPS key access](../README.md#start-at-login-or-boot) for the
-service user, which must also be able to read the encrypted input.
-The unit prepares secrets, then recreates connectors so they use the current token.
-Stop removes connector containers but keeps external secrets and Cloudflare routes.
-Enable user lingering if boot must work before login.
-
-```sh
-install -Dm 0644 deployments/gateway/ya-infra-gateway.service \
-  ~/.config/systemd/user/ya-infra-gateway.service
-systemctl --user daemon-reload
-systemctl --user enable --now ya-infra-gateway.service
-```
+Use [native runtime recovery](../README.md#restart-and-boot). Prepare the connector
+secret before the first Compose start and after token changes; existing containers
+restart with their stored secret. Boot does not need the management API or SOPS.
 
 For the former connector, first preserve its inspect output, restart policy, token,
 Gateway state, and encrypted input in a private backup. Start the Compose connector
@@ -74,8 +61,8 @@ Host networking retains loopback origins. Test **every** current Tunnel origin,
 including unmanaged routes, from that network context. Check new container health,
 public routes, and an unchanged Gateway diff before disabling the old restart owner
 and stopping the old connector. Keep it for recovery. To roll back, stop the new
-user unit, restore the old restart policy, and start the old connector. Inspect diff
-again if any origin changed after takeover.
+Compose connector, restore the old restart policy, and start the old connector.
+Inspect diff again if any origin changed after takeover.
 
 For a previous two-file Gateway input, copy the decrypted `gateways` and `routes`
 into the new encrypted entry and add each connector token. Keep all identities,

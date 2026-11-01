@@ -5,7 +5,7 @@ services:
     image: localhost/telegram-bot-gateway@sha256:a3b2e40e598803c5e71215ba86d72da704a82c6491b96be85de4492c79174d38
     pull_policy: never
     network_mode: host
-    restart: always
+    restart: unless-stopped
     entrypoint: [/bin/sh, -ec]
     command: ["test -s /var/lib/tbg/gateway.sqlite; exec tbg-gateway"]
     volumes: ["data:/var/lib/tbg"]

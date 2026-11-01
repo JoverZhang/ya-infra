@@ -43,22 +43,22 @@ Build hooks print image digests. Set the chosen image in the app's encrypted
 environment, recreate its containers, and run that app's verification. Existing
 local images use `pull_policy: never`; a new host must build or load them first.
 
-## Start at login or boot
+## Restart and boot
 
-[ya-infra-app@.service](ya-infra-app@.service) is a native systemd user template.
-Set its checkout paths if your persistent checkout is not `~/ya-infra`. Complete
-app setup first. The unit recreates containers at start and removes them at stop;
-external data and secrets remain. Enable user lingering for startup before login.
+Compose declares `restart: unless-stopped`. Create containers once with `up -d`;
+manual stops remain stopped. Image or configuration changes require another
+Compose apply. Boot recovery starts existing containers; it does not re-read
+Compose files or prepare secrets.
 
-SOPS must find its key without shell exports: use
-`$XDG_CONFIG_HOME/sops/age/keys.txt` (default `~/.config/sops/age/keys.txt`, mode 0600),
-or add `Environment=SOPS_AGE_KEY_FILE=/absolute/path/age.key` in a unit override.
+Docker uses its running daemon for recovery. Podman uses its supplied
+`podman-restart.service`; enable that native user service and user lingering on
+the host. Do not add application-specific systemd units. A Podman API socket alone
+does not restore containers. A host reboot must be tested separately.
 
-```sh
-install -Dm 0644 deployments/ya-infra-app@.service ~/.config/systemd/user/ya-infra-app@.service
-systemctl --user daemon-reload
-systemctl --user enable --now ya-infra-app@paseo.service
-```
+SOPS keys are needed when applying configuration, not when restarting existing
+containers. Keep the default key at `$XDG_CONFIG_HOME/sops/age/keys.txt`
+(default `~/.config/sops/age/keys.txt`, mode 0600). Runtime secrets remain in
+Podman's store until explicitly removed.
 
 ## Extend
 

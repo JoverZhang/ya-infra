@@ -25,8 +25,8 @@ removal, but they still need backup against corruption or direct volume deletion
    For a standalone container, disable its restart policy before stopping it.
 3. Start Compose with the existing data. Never run two writers on the same home,
    database, or browser profile. TBG must have only one Telegram poller.
-4. Verify the app's local and public behavior, then enable its new user unit.
-   Exercise unit restart; report separately whether a host reboot was tested.
+4. Verify the app's local and public behavior and its restart policy. Exercise
+   container restart; report separately whether a host reboot was tested.
 
 | App | Preserve and check |
 | --- | --- |
@@ -37,8 +37,16 @@ removal, but they still need backup against corruption or direct volume deletion
 
 ## Roll back
 
-Stop the new user unit first; its Compose down keeps external data and secrets.
+Stop the new Compose deployment first; down keeps external data and secrets.
 Restore the old startup declaration and restart policy, then start the old owner.
 Keep the same data if the app version and format did not change. If an upgrade
 changed the data format, restore the verified backup before starting the old image.
 Recheck local endpoints and public routes before retiring recovery artifacts.
+
+## Retire custom startup units
+
+Existing containers must survive this handoff so native runtime boot recovery can
+start them. Disable the old units and suppress their Compose-down `ExecStop` for
+the one-time unit stop. Stop the units, then remove the temporary override. Verify
+container IDs, restart policies, runtime boot recovery, and disabled old units.
+Do not disable the shared runtime recovery used by unrelated applications.

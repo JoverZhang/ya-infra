@@ -19,7 +19,7 @@ secret names are refused. The client ownership record remains under
 write; fix the error and retry setup before starting or recreating the server.
 
 Setup is explicit. Run it again after server-config changes, then recreate the
-container to mount the updated secret. The user unit runs Compose only.
+container to mount the updated secret. Boot recovery reuses the stored secret.
 
 Compose requires an existing, nonempty `gateway.sqlite`. Only for a deliberately
 new bot database, run `just compose tbg run --rm gateway 'exec tbg-gateway'` from
