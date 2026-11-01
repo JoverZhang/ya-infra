@@ -9,8 +9,8 @@ podman volume create personal-inbox-data
 
 Use `config.example.yaml` as the shape of ignored `config.sops.yaml`. Choose a
 random access password of at least 16 characters. The server reads its account
-from the configured GitHub token. Never put tokens in browser storage or URLs.
-Keep the classic PAT in a separate SOPS binary payload, with scopes described in
+from `github_token` in the encrypted configuration. Never put tokens in browser
+storage or URLs. Use a classic PAT with the scopes described in
 [the application](../../../../apps/inbox/README.md). Local aliases can omit project names.
 
 From this app directory, with the checkout root `.sops.yaml` age policy configured:
@@ -21,12 +21,12 @@ sops --config ../../../.sops.yaml encrypt --filename-override config.sops.yaml \
 sops config.sops.yaml
 sops exec-file config.sops.yaml \
   'podman secret create --replace ya-infra-inbox-config {}'
-# token.sops.env contains only GITHUB_TOKEN; create it privately with SOPS.
-sops exec-env token.sops.env \
-  'printf %s "$GITHUB_TOKEN" | podman secret create --replace ya-infra-inbox-github -'
 ```
 
-`token.sops.env` is ignored and must stay outside tracked source.
+An empty token permits local setup and displays a source-unavailable task; it does
+not claim an empty GitHub inbox. Add the token with `sops config.sops.yaml`, prepare
+the native config secret again and recreate the container.
+
 Native secrets are readable runtime data in Podman's store. Updating a secret
 requires recreating its consumer. `config.sops.env` optionally overrides Compose
 image and external volume names; use `config.example.env` as its shape.

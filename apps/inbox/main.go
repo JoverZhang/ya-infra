@@ -22,11 +22,11 @@ import (
 var assets embed.FS
 
 type configuration struct {
-	Listen    string       `yaml:"listen"`
-	Database  string       `yaml:"database"`
-	TokenFile string       `yaml:"github_token_file"`
-	Password  string       `yaml:"password"`
-	Sites     []siteConfig `yaml:"sites"`
+	Listen   string       `yaml:"listen"`
+	Database string       `yaml:"database"`
+	Token    string       `yaml:"github_token"`
+	Password string       `yaml:"password"`
+	Sites    []siteConfig `yaml:"sites"`
 }
 type siteConfig struct {
 	ID         string `yaml:"id"`
@@ -130,13 +130,8 @@ func run() error {
 	defer db.Close()
 	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	app := &application{db: db, config: cfg, github: githubClient{base: "https://api.github.com", client: client}}
-	if cfg.TokenFile != "" {
-		token, e := os.ReadFile(cfg.TokenFile)
-		if e != nil {
-			return errors.New("read GitHub token: check secret mount")
-		}
-		app.github.token = strings.TrimSpace(string(token))
-	}
+	app.github.token = strings.TrimSpace(cfg.Token)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	done := make(chan struct{})

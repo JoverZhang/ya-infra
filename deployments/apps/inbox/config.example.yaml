@@ -1,6 +1,6 @@
 listen: 127.0.0.1:18580
 database: /data/inbox.sqlite
-github_token_file: /run/secrets/github-token
+github_token: ""
 password: REPLACE_WITH_A_RANDOM_ACCESS_PASSWORD
 sites:
   - id: site

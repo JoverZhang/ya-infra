@@ -16,9 +16,6 @@ services:
       - source: ya-infra-inbox-config
         target: /run/secrets/inbox-config
         mode: "0400"
-      - source: ya-infra-inbox-github
-        target: /run/secrets/github-token
-        mode: "0400"
     volumes:
       - data:/data
       - type: volume
@@ -34,6 +31,4 @@ volumes:
     name: ${SITE_DATA_VOLUME:-static-site-data}
 secrets:
   ya-infra-inbox-config:
-    external: true
-  ya-infra-inbox-github:
     external: true

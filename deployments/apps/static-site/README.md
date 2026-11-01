@@ -11,8 +11,13 @@ just compose static-site up -d
 just compose static-site logs --tail 50
 ```
 
-Prepare the token with SOPS exec-env as shown for [Inbox](../inbox/README.md), using
-the site secret name. A separate repository-scoped read token is sufficient; the
+Prepare a private ignored `token.sops.env` containing `GITHUB_TOKEN` and use:
+
+```sh
+sops exec-env token.sops.env \
+  'printf %s "$GITHUB_TOKEN" | podman secret create --replace ya-infra-static-site-github -'
+```
+ A separate repository-scoped read token is sufficient; the
 static Web container never receives Git credentials. Pin pulled images by digest
 in the encrypted environment. Repository URLs must not contain embedded credentials.
 
