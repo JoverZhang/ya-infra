@@ -1,0 +1,10 @@
+FROM docker.io/library/golang:1.27.3-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go index.html ./
+RUN CGO_ENABLED=1 go build -trimpath -ldflags='-s -w' -o /inbox .
+FROM docker.io/library/debian:bookworm-20261027-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build /inbox /usr/local/bin/inbox
+ENTRYPOINT ["/usr/local/bin/inbox"]

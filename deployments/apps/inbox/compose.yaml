@@ -1,0 +1,33 @@
+name: ya-infra-inbox
+services:
+  web:
+    image: ${INBOX_IMAGE:-localhost/personal-inbox:local}
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    secrets:
+      - source: ya-infra-inbox-config
+        target: /run/secrets/inbox-config
+        mode: "0400"
+      - source: ya-infra-inbox-github
+        target: /run/secrets/github-token
+        mode: "0400"
+    volumes:
+      - data:/data
+      - type: volume
+        source: site
+        target: /repo
+        read_only: true
+volumes:
+  data:
+    external: true
+    name: ${INBOX_DATA_VOLUME:-personal-inbox-data}
+  site:
+    external: true
+    name: ${SITE_DATA_VOLUME:-static-site-data}
+secrets:
+  ya-infra-inbox-config:
+    external: true
+  ya-infra-inbox-github:
+    external: true
