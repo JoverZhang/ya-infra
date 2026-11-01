@@ -2,6 +2,7 @@ name: ya-infra-static-site
 services:
   sync:
     image: ${SITE_SYNC_IMAGE:-localhost/ya-infra-static-site:local}
+    pull_policy: never
     build:
       context: .
       args:
