@@ -51,37 +51,27 @@ git -C /path/to/cpe worktree add --detach /path/to/ya-infra/.sources/cpe origin/
 
 Set `CPE_SCRIPTS_DIR` to that worktree's `worker_scripts` directory. The worktree
 shares Git metadata with the development repository; keep that repository available.
-To update, fetch the repository, confirm the worktree is clean, and select a commit:
+For this test deployment, set `CPE_IMAGE=cpe:local` and point `CPE_SCRIPTS_DIR`
+to this exact worktree's `worker_scripts` directory. From the ya-infra root:
 
 ```sh
-git -C .sources/cpe fetch origin
-git -C .sources/cpe status --short
-just compose cpe stop daemon web
-git -C .sources/cpe switch --detach origin/master
-just compose cpe up -d --no-deps daemon web
+just cpe-update
 ```
 
-Stop daemon/Web before changing mounted scripts, then start them after updating.
-Git does not publish a directory tree atomically. Check the selected revision's
-image compatibility; a source update does not update application binaries or import
-Algorithm records into the database. Other environments can select their own
-external scripts directory.
+The command refuses local source changes or a mismatched image/scripts setting,
+fetches `origin/master`, stops only daemon/Web, updates the worktree, builds the
+image, recreates both apps, then runs `doctor` and displays Compose status.
+Databases keep running. The page is unavailable during the build because Git
+updates the mounted scripts in place. A failed build leaves the apps stopped;
+fix the error and rerun the command. No schema or Algorithm upload is implicit.
 
-## Operate and update
+Other environments can select their own scripts directories and operate through
+native Compose. Git does not publish a directory tree atomically; stop apps before
+changing a mounted worktree, and keep references compatible with the image.
 
 ```sh
-# Run from the ya-infra root.
-just compose cpe up -d
 just compose cpe ps
 just compose cpe logs --tail 50
-
-# Build the same revision selected for the scripts mount.
-(cd .sources/cpe && just image build cpe:local)
-
-# Run from the ya-infra root; leave database containers running.
-just compose cpe up -d --no-deps --force-recreate daemon web
-just compose cpe exec daemon cat /app/build.json
-just compose cpe exec daemon cpe-client doctor
 ```
 
 `restart` keeps the existing image. Recreate daemon and Web to use the new tag;
