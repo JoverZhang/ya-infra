@@ -57,7 +57,11 @@ func (a *application) routes() http.Handler {
 			w.Write([]byte(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Inbox · Sign in</title><body style="font:18px system-ui;background:#10151c;color:#e8eef5;max-width:420px;margin:12vh auto;padding:24px"><h1>Personal inbox</h1><p>Sign in to view your tasks and deployment status.</p><form method="post" action="/login"><input type="password" name="password" autocomplete="current-password" required placeholder="Access password"><button>Sign in</button></form></body></html>`))
 			return
 		}
-		data, _ := assets.ReadFile("index.html")
+		data, err := assets.ReadFile("index.html")
+		if err != nil {
+			http.Error(w, "page unavailable", 500)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(data)
 	})
@@ -144,7 +148,11 @@ func (a *application) routes() http.Handler {
 			http.Error(w, "store unavailable", 500)
 			return
 		}
-		n, _ := result.RowsAffected()
+		n, err := result.RowsAffected()
+		if err != nil {
+			http.Error(w, "store unavailable", 500)
+			return
+		}
 		if n == 0 {
 			http.NotFound(w, r)
 			return

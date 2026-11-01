@@ -14,6 +14,7 @@ import (
 // Exercise the same HTTP routes, collectors and SQLite store used in deployment.
 func TestInboxRecovery(t *testing.T) {
 	fail := false
+	scoped := true
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			t.Errorf("GitHub write attempted: %s", r.Method)
@@ -23,6 +24,11 @@ func TestInboxRecovery(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if scoped {
+			w.Header().Set("X-OAuth-Scopes", "repo, notifications")
+		} else {
+			w.Header().Set("X-OAuth-Scopes", "notifications")
+		}
 		switch r.URL.Path {
 		case "/user":
 			w.Write([]byte(`{"login":"fixture-user"}`))
@@ -105,6 +111,13 @@ func TestInboxRecovery(t *testing.T) {
 	if !items[0].Read || items[0].SnoozedUntil == 0 {
 		t.Fatal("state lost on restart")
 	}
+	scoped = false
+	app.collect(context.Background())
+	items = readItems()
+	if len(items) != 2 {
+		t.Fatal("insufficient scopes silently accepted")
+	}
+	scoped = true
 	fail = true
 	app.collect(context.Background())
 	items = readItems()
@@ -181,4 +194,25 @@ func TestSiteFaultLifecycle(t *testing.T) {
 		t.Fatal("fault did not resolve")
 	}
 	t.Log(`{"site":"origin/public/sync checked","privacy":"raw errors withheld","recovery":"resolved"}`)
+}
+
+func TestGitHubRetryDeadline(t *testing.T) {
+	requests := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(429)
+	}))
+	defer api.Close()
+	client := githubClient{base: api.URL, token: "fixture", client: api.Client()}
+	var value struct{}
+	if client.get(context.Background(), "/user", &value) == nil {
+		t.Fatal("rate limit not reported")
+	}
+	if client.get(context.Background(), "/repos/example/site/commits/pages", &value) == nil {
+		t.Fatal("deferred request not reported")
+	}
+	if requests != 1 {
+		t.Fatalf("issued %d requests before retry deadline", requests)
+	}
 }

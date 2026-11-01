@@ -16,7 +16,10 @@ GitHub collection combines open review requests, assigned issues, authored PRs
 with requested changes, and unread mentions/review requests/comments. One URL is
 one item. A completed snapshot resolves missing items. A failed or truncated
 snapshot retains the previous tasks and creates a source error. Notifications
-need classic PAT `notifications`; private task searches also need `repo`.
+need a classic PAT with `repo` coverage. This version requires private-repository
+coverage before replacing a cached task snapshot; a public-only token is rejected.
+The `notifications` scope can be added explicitly. Rate-limit retry deadlines are
+honored for all requests, including site revision checks.
 
 Read/snooze state belongs only to this inbox; no GitHub records are changed.
 Read tasks remain active. New upstream updates or recurring faults become unread.

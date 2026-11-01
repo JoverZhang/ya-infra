@@ -5,6 +5,8 @@
 :8080 {
  root * /repo/current
  header Cache-Control "no-cache"
+ @git path_regexp git (^|/)[.]git(/|$)
+ respond @git 404
  file_server {
   hide .git .git/**
  }

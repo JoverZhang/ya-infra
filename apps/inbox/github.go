@@ -18,6 +18,7 @@ type githubClient struct {
 	base, token string
 	client      *http.Client
 	poll        time.Duration
+	retryUntil  time.Time
 }
 
 func (g *githubClient) interval() time.Duration {
@@ -27,6 +28,9 @@ func (g *githubClient) interval() time.Duration {
 	return 60 * time.Second
 }
 func (g *githubClient) get(ctx context.Context, path string, out any) error {
+	if time.Now().Before(g.retryUntil) {
+		return errors.New("GitHub retry is deferred by rate limits")
+	}
 	if g.token == "" {
 		return errors.New("GitHub token is not configured")
 	}
@@ -43,6 +47,36 @@ func (g *githubClient) get(ctx context.Context, path string, out any) error {
 		return errors.New("GitHub request failed")
 	}
 	defer res.Body.Close()
+	if res.StatusCode == 403 || res.StatusCode == 429 {
+		deadline := time.Time{}
+		if raw := res.Header.Get("Retry-After"); raw != "" {
+			if seconds, e := strconv.Atoi(raw); e == nil {
+				deadline = time.Now().Add(time.Duration(seconds) * time.Second)
+			} else if date, e := http.ParseTime(raw); e == nil {
+				deadline = date
+			}
+		}
+		if res.Header.Get("X-RateLimit-Remaining") == "0" {
+			if epoch, e := strconv.ParseInt(res.Header.Get("X-RateLimit-Reset"), 10, 64); e == nil && time.Unix(epoch, 0).After(deadline) {
+				deadline = time.Unix(epoch, 0)
+			}
+		}
+		if deadline.IsZero() {
+			deadline = time.Now().Add(time.Minute)
+		}
+		g.retryUntil = deadline.Add(time.Second)
+	}
+	if path == "/user" && res.StatusCode == 200 {
+		covered := false
+		for _, scope := range strings.Split(res.Header.Get("X-OAuth-Scopes"), ",") {
+			if strings.TrimSpace(scope) == "repo" {
+				covered = true
+			}
+		}
+		if !covered {
+			return errors.New("Classic PAT repo scope is required for complete private task coverage")
+		}
+	}
 	if seconds, e := strconv.Atoi(res.Header.Get("X-Poll-Interval")); e == nil && time.Duration(seconds)*time.Second > g.poll {
 		g.poll = time.Duration(seconds) * time.Second
 	}

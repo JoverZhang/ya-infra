@@ -90,8 +90,23 @@ func run() error {
 	if cfg.Database == "" {
 		cfg.Database = "/data/inbox.sqlite"
 	}
-	if len(cfg.Password) < 16 {
+	if len(cfg.Password) < 16 || strings.HasPrefix(cfg.Password, "REPLACE_") {
 		return errors.New("configure an access password of at least 16 characters")
+	}
+	if len(os.Args) > 1 {
+		if len(os.Args) != 2 || os.Args[1] != "health" {
+			return errors.New("usage: inbox [health]")
+		}
+		client := http.Client{Timeout: 3 * time.Second}
+		res, e := client.Get("http://" + cfg.Listen + "/healthz")
+		if e != nil {
+			return errors.New("inbox health endpoint unavailable")
+		}
+		defer res.Body.Close()
+		if res.StatusCode != 200 {
+			return errors.New("inbox health endpoint failed")
+		}
+		return nil
 	}
 	ids := map[string]bool{}
 	for _, s := range cfg.Sites {
@@ -157,12 +172,12 @@ func run() error {
 func (a *application) collect(ctx context.Context) {
 	items, err := a.github.tasks(ctx)
 	if e := a.save("github", items, err); e != nil {
-		log.Print("store GitHub observation failed")
+		log.Printf("store GitHub observation: %v", e)
 	}
 	for _, site := range a.config.Sites {
 		items, err := a.checkSite(ctx, site)
 		if e := a.save("site:"+site.ID, items, err); e != nil {
-			log.Print("store site observation failed")
+			log.Printf("store site observation: %v", e)
 		}
 	}
 }

@@ -27,6 +27,12 @@ services:
     image: ${WEB_IMAGE:?select a pinned Caddy image}
     restart: unless-stopped
     command: [caddy, run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     ports: ["127.0.0.1:${SITE_PORT:-18581}:8080"]
     volumes:
       - type: volume
