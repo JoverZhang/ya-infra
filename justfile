@@ -24,4 +24,5 @@ gateway *args:
 # Update the configured CPE test deployment from its source worktree.
 [no-cd]
 cpe-update:
+    @git -C {{quote(justfile_directory())}} pull --ff-only
     @go -C {{quote(justfile_directory() / "deployments/apps/cpe")}} run . update

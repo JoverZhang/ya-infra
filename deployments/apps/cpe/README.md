@@ -58,7 +58,9 @@ to this exact worktree's `worker_scripts` directory. From the ya-infra root:
 just cpe-update
 ```
 
-The command refuses local source changes or a mismatched image/scripts setting,
+The command first runs `git pull --ff-only` in ya-infra, then executes the updated
+Go hook. A failed pull aborts before any deployment operation. The hook refuses
+local source changes or a mismatched image/scripts setting,
 fetches `origin/master`, stops only daemon/Web, updates the worktree, builds the
 image, recreates both apps, then runs `doctor` and displays Compose status.
 Databases keep running. The page is unavailable during the build because Git
