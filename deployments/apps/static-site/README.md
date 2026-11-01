@@ -1,32 +1,32 @@
 # Development site
 
-Compose runs upstream git-sync and a Node development server. The directory keeps
-its existing name so callers and the external volume need no rename. Private
+Compose runs Vite directly against the host worktree selected by `SITE_WORKTREE`.
+The directory keeps its existing name so callers and external volumes need no rename. Private
 repository, branch, public hostname and URL base belong in ignored `config.sops.env`,
 shaped by `config.example.env`. Keep private names out of tracked files and PRs.
 
 ```sh
 podman volume create static-site-data
 podman volume create static-site-annotations
-# Prepare the repository secret below, then build the local web image.
-just compose static-site build web annotations
+# Prepare the repository secret below, then build the annotations image.
+just compose static-site build annotations
 just compose static-site up -d
 just compose static-site ps
 ```
 
 ## Source and runtime
 
-Git-sync polls every 60 seconds and publishes `/repo/current`. Web reads that volume
-readonly, copies source to its own `/home/node/site`, then runs `npm install` and
-`npm run dev -- --host 0.0.0.0 --port 8080 --strictPort --base "$VITE_BASE_PATH"`.
-The copy excludes `.git`, `node_modules` and `dist`. Dependencies and Vite caches
-stay in the disposable container workspace; Git credentials never enter Web.
+Web bind-mounts the absolute `SITE_WORKTREE` at the same container path and runs
+`npm install`, then Vite there. Host file saves update the shared preview through
+HMR; commits, pushes, git-sync, copying and container restarts do not gate rendering.
+Use this shared preview for feedback verification instead of starting another dev
+server. Native init/restart owns the Vite process. Dependencies are shared with the
+host worktree; rootless container UID 0 writes as the invoking host user.
 
-A checkout change or removal exits Web. Native init and `restart: unless-stopped`
-end npm/Vite children and start a fresh workspace. Installation or server failures
-retry after a short delay. While source or a working dev server is unavailable,
-there is no static fallback; Gateway reports an unavailable origin. Fetch errors
-retry without changing the selected checkout. Sync readiness checks only fetching.
+The existing git-sync mirror and external source volume remain solely for the
+Inbox's upstream monitoring. They do not supply live Web source. No Git credential
+is mounted into Web. The source app must deny `.codex`, `.infra`, env/key/cert and
+Git metadata from HTTP. The worktree must exist; a missing bind source fails.
 
 Set `SITE_BASE_PATH` to an absolute URL path with a trailing slash, and set
 `SITE_DEV_HOST` to the single public hostname. Vite permits that Host alongside
@@ -62,8 +62,9 @@ tool_timeout_sec = 360
 
 The operator launches `codex --no-daemon` in that worktree, checks `/mcp`, and asks
 it to process this project's feedback. Read unresolved backlog, including
-acknowledged unfinished work, before watching new events. Verify source changes,
-push the configured preview branch and verify deployment before resolving notes.
+acknowledged unfinished work, before watching new events. Verify source changes
+and the shared preview before resolving notes. Commit and push preserve source;
+they are not a prerequisite for rendering local edits.
 Use `/quit` to exit; the HTTP backend keeps accepting feedback without a client.
 No Codex process is launched by deployment or its verification checks.
 
@@ -76,8 +77,8 @@ sops exec-env token.sops.env \
   'printf %s "$GITHUB_TOKEN" | podman secret create --replace ya-infra-static-site-github -'
 ```
 
-Repository URLs must not contain credentials. Pin `SYNC_IMAGE` by digest; the web
-Dockerfile pins Node and Go. After changing its runtime, rebuild Web and recreate
-it. When switching from static serving, set `WEB_IMAGE` to the local dev image,
-remove any legacy Caddy bind override, and delete owned `/repo/site` release output.
-No release directory or old HTML seed participates in development serving.
+Repository URLs must not contain credentials. Pin `SYNC_IMAGE` and `WEB_IMAGE` by
+digest. Web uses the official Node image; no custom copying runtime is built.
+Changing the worktree path or runtime configuration requires recreating Web.
+Keep the worktree available for native boot recovery. Closing Codex does not stop
+the preview or annotation service, and no static fallback is served.
