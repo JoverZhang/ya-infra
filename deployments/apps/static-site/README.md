@@ -64,6 +64,8 @@ checkout with no package.json cannot build; select the source branch first.
 On a new installation the page returns 404 until the first build succeeds.
 
 ```sh
+# Start only the new sync container while the old Web container serves the page.
+just compose static-site up -d --no-deps --force-recreate sync
 just compose static-site logs --tail 50 sync
 just compose static-site exec -T sync test -s /repo/site/current/index.html
 # Apply an updated Caddyfile or base path only after the first successful build.

@@ -61,9 +61,6 @@ func build() error {
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read previous publication: %w", err)
 	}
-	if err := os.Rename(link, siteDir+"/current"); err != nil {
-		return fmt.Errorf("publish build output: %w", err)
-	}
 	if err := os.Remove(siteDir + "/build-error"); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear build failure: %w", err)
 	}
@@ -73,11 +70,15 @@ func build() error {
 		return err
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".release-") && entry.Name() != filepath.Base(release) && entry.Name() != previous {
+		if strings.HasPrefix(entry.Name(), ".release-") && entry.Name() != filepath.Base(release) && entry.Name() != filepath.Base(link) && entry.Name() != previous {
 			if err := os.RemoveAll(filepath.Join(siteDir, entry.Name())); err != nil {
 				return fmt.Errorf("remove old publication: %w", err)
 			}
 		}
+	}
+	// Publication is the commit point: all fallible preparation is complete.
+	if err := os.Rename(link, siteDir+"/current"); err != nil {
+		return fmt.Errorf("publish build output: %w", err)
 	}
 	return nil
 }
