@@ -10,3 +10,4 @@ infra.toml
 /deployments/apps/*/compose.override.yaml
 
 /.sources/
+**/token.sops.env

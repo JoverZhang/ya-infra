@@ -1,0 +1,53 @@
+name: ya-infra-static-site
+services:
+  sync:
+    image: ${SYNC_IMAGE:?select a pinned git-sync image}
+    restart: unless-stopped
+    user: "0:0"
+    command:
+      - --repo=${SITE_REPOSITORY:?select a Git repository URL}
+      - --ref=${SITE_BRANCH:-pages}
+      - --root=/repo
+      - --link=current
+      - --depth=1
+      - --period=60s
+      - --max-failures=-1
+      - --stale-worktree-timeout=5m
+      - --username=x-access-token
+      - --password-file=/run/secrets/site-token
+      - --error-file=sync-error
+      - --http-bind=:2020
+    ports: ["127.0.0.1:${SITE_SYNC_PORT:-18582}:2020"]
+    secrets:
+      - source: ya-infra-static-site-github
+        target: /run/secrets/site-token
+        mode: "0400"
+    volumes: ["data:/repo"]
+  web:
+    image: ${WEB_IMAGE:?select a pinned Caddy image}
+    restart: unless-stopped
+    command: [caddy, run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    ports: ["127.0.0.1:${SITE_PORT:-18581}:8080"]
+    volumes:
+      - type: volume
+        source: data
+        target: /repo
+        read_only: true
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind: {create_host_path: false}
+volumes:
+  data:
+    external: true
+    name: ${SITE_DATA_VOLUME:-static-site-data}
+secrets:
+  ya-infra-static-site-github:
+    external: true
