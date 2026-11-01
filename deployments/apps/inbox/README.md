@@ -11,7 +11,7 @@ Use `config.example.yaml` as the shape of ignored `config.sops.yaml`. Choose a
 random access password of at least 16 characters. The server reads its account
 from `github_token` in the encrypted configuration. Never put tokens in browser
 storage or URLs. Use a classic PAT with the scopes described in
-[the application](../../../../apps/inbox/README.md). Local aliases can omit project names.
+[the application](../../../apps/inbox/README.md). Local aliases can omit project names.
 
 From this app directory, with the checkout root `.sops.yaml` age policy configured:
 
