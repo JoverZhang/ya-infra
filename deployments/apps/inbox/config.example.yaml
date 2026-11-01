@@ -1,0 +1,14 @@
+listen: 127.0.0.1:18580
+database: /data/inbox.sqlite
+github_token: ""
+password: REPLACE_WITH_A_RANDOM_ACCESS_PASSWORD
+sites:
+  - id: site
+    label: Static site
+    repository: example/site
+    branch: pages
+    current_link: /repo/current
+    sync_error_file: /repo/sync-error
+    sync_url: http://127.0.0.1:18582/
+    origin_url: http://127.0.0.1:18581/
+    public_url: ""
