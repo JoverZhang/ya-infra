@@ -28,7 +28,7 @@ x-runtime: &runtime
 
 services:
   mysql:
-    image: ghcr.io/computed-parameter/computed-parameter-engine-mysql@sha256:d14140a10302c27a9538484a32baa913a32b908a3a349fb2046270c087326b66
+    image: ghcr.io/computed-parameter/computed-parameter-engine-mysql@sha256:a973dfd6710f7ce8979ce86f1cabf00bc1f9cc502298922be89319055b459c24
     platform: linux/amd64
     pull_policy: never
     restart: unless-stopped
